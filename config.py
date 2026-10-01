@@ -688,3 +688,46 @@ MANO_EN_PARALELO = True
 # ordenador. Coste despreciable; pon False cuando ya no lo necesites.
 PERFIL_BUCLE        = True
 PERFIL_BUCLE_CADA_S = 3.0
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GUANTE MANUS (preparación 1-oct) — PEGAR AL FINAL DE config.py
+# ══════════════════════════════════════════════════════════════════════════════
+# De dónde salen los dedos en probar_guante.py (más adelante también en el teleop):
+#   "simulado" → barras deslizantes (sin guante ni licencia)
+#   "manus"    → SDK de Python de MANUS
+FUENTE_GUANTE = "simulado"
+
+# "integrado" → guantes/dongle por USB en ESTE PC con Ubuntu (no hace falta MANUS Core)
+# "local"     → MANUS Core corriendo en este mismo PC (solo Windows)
+# "remoto"    → MANUS Core corriendo en otro PC Windows de la red
+MANUS_MODO       = "integrado"
+MANUS_LADO       = "derecha"   # guante que mueve la OrcaHand derecha
+MANUS_TIMEOUT_S  = 0.3         # s sin datos → se considera perdido (la mano se queda quieta)
+MANUS_REINTENTOS = 10          # intentos de conexión al arrancar
+MANUS_DEBUG      = True        # imprime lo necesario para verificar el SDK el miércoles
+MANUS_SUAVIZADO  = 0.5         # 0..1 → 1 = sin suavizar, más bajo = más suave (más retraso)
+
+# ctrl de la mano ← valor del guante (grados):
+#     q = offset + signo · escala · radianes(valor)
+# VALORES DE PARTIDA: los signos y escalas se ajustan con probar_guante.py.
+# Una tupla de claves = media (p.ej. ("index_pip_stretch", "index_dip_stretch")).
+MANUS_MAPEO = {
+    #  ctrl   (clave del guante,     signo, escala, offset rad)
+    1:  ("pinky_mcp_spread",   -1.0, 1.0,  0.15),
+    2:  ("pinky_mcp_stretch",   1.0, 1.0,  0.0),
+    3:  ("pinky_pip_stretch",   1.0, 1.0,  0.0),
+    4:  ("ring_mcp_spread",    -1.0, 1.0,  0.0),
+    5:  ("ring_mcp_stretch",    1.0, 1.0,  0.0),
+    6:  ("ring_pip_stretch",    1.0, 1.0,  0.0),
+    7:  (None,                  0.0, 0.0,  0.0),     # corazón abd: fijo
+    8:  ("middle_mcp_stretch",  1.0, 1.0,  0.0),
+    9:  ("middle_pip_stretch",  1.0, 1.0,  0.0),
+    10: ("index_mcp_spread",    1.0, 1.0,  0.0),
+    11: ("index_mcp_stretch",   1.0, 1.0,  0.0),
+    12: ("index_pip_stretch",   1.0, 1.0,  0.0),
+    # Pulgar — PROVISIONAL, se calibra con el guante puesto
+    13: ("thumb_mcp_stretch",   1.0, 1.0, -0.0979),  # oposición (CMC)
+    14: ("thumb_mcp_spread",   -1.0, 1.0,  0.641),   # abducción
+    15: ("thumb_pip_stretch",   1.0, 1.0,  0.0),     # MCP anatómico
+    16: ("thumb_dip_stretch",   1.0, 1.0,  0.0),     # IP
+}
