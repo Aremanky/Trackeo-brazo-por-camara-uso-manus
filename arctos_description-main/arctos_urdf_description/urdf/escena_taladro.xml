@@ -1,11 +1,11 @@
 <!-- GENERADO por taladro/preparar_taladro.py — no editar a mano (vuelve a generarlo). -->
 <mujoco>
   <asset>
-    <mesh name="taladro_cuerpo"      file="/home/elecnor/Documentos/prueba si/trackeo-de-la-mano-humana-con-la-c-mara-Luxonis-Pro-Oak-D-mano-orcahand-y-brazo-arctos-6DOF/taladro/piezas/cuerpo.obj"/>
-    <mesh name="taladro_empunadura"  file="/home/elecnor/Documentos/prueba si/trackeo-de-la-mano-humana-con-la-c-mara-Luxonis-Pro-Oak-D-mano-orcahand-y-brazo-arctos-6DOF/taladro/piezas/empunadura.obj"/>
-    <mesh name="taladro_bateria"     file="/home/elecnor/Documentos/prueba si/trackeo-de-la-mano-humana-con-la-c-mara-Luxonis-Pro-Oak-D-mano-orcahand-y-brazo-arctos-6DOF/taladro/piezas/bateria.obj"/>
-    <mesh name="taladro_portabrocas" file="/home/elecnor/Documentos/prueba si/trackeo-de-la-mano-humana-con-la-c-mara-Luxonis-Pro-Oak-D-mano-orcahand-y-brazo-arctos-6DOF/taladro/piezas/portabrocas.obj"/>
-    <mesh name="taladro_broca"       file="/home/elecnor/Documentos/prueba si/trackeo-de-la-mano-humana-con-la-c-mara-Luxonis-Pro-Oak-D-mano-orcahand-y-brazo-arctos-6DOF/taladro/piezas/broca.obj"/>
+    <mesh name="taladro_cuerpo"      file="../../../taladro/piezas/cuerpo.obj"/>
+    <mesh name="taladro_empunadura"  file="../../../taladro/piezas/empunadura.obj"/>
+    <mesh name="taladro_bateria"     file="../../../taladro/piezas/bateria.obj"/>
+    <mesh name="taladro_portabrocas" file="../../../taladro/piezas/portabrocas.obj"/>
+    <mesh name="taladro_broca"       file="../../../taladro/piezas/broca.obj"/>
   </asset>
 
   <worldbody>

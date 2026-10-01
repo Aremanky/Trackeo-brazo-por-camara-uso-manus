@@ -431,7 +431,7 @@ IMITAR_SUAVIZADO = 3     # fotogramas de media móvil sobre los ángulos objetiv
 # ── PASO 5 — MUÑECA DEL ARCTOS: SOLO PRONOSUPINACIÓN ─────────────────────────
 PRONO_JOINT    = "joint6"   # "joint6" (solo mueve la mano) | "joint4"
 PRONO_SIGNO    = -1.0        # si gira al revés → -1.0
-PRONO_ESCALA   = 1.0
+PRONO_ESCALA   = 1.2
 PRONO_LIMITE   = 1.5        # rad (~86°) a cada lado del neutro
 PRONO_VEL_MAX  = 2.0        # (antes 3.0) rad/s
 PRONO_SUAVIZADO = 0.35      # 0..1 (filtro exponencial; más bajo = más suave)
@@ -445,8 +445,6 @@ ARRIBA_REF = "camara"
 # Si la muñeca se mide más lejos que brazo+antebrazo por encima de este margen,
 # es una mala medida (mano delante del cuerpo): NO se fuerza el codo a recto.
 CODO_ESTIRADO_MARGEN = 0.05     # 5 %
-
-PRONO_ESCALA = 1.2              # (antes 1.6: saturaba a ±86° y daba giros bruscos de ±2.4 rad)
 
 # ── PASO 2 — HÍBRIDO: LA MANO DEL ROBOT VA DONDE VA TU MANO (distancias OAK-D) ──
 # 0.0 = solo ángulos (como hasta ahora) · 1.0 = la mano del robot sigue a tu mano
@@ -657,3 +655,36 @@ IK_RESCATE_EN_FINO = False  # el rescate de la IK (cambiar de postura) nunca en 
 #   False en cualquiera de los dos = comportamiento anterior.
 PALMA_CENTRO_REAL = True
 CODO_COMPATIBLE   = True
+# ══════════════════════════════════════════════════════════════════════════════
+# FLUIDEZ (30-sep) — MANO FÍSICA SIN TROMPICONES Y CÁMARA MÁS FLUIDA
+# ══════════════════════════════════════════════════════════════════════════════
+# ── Mano física (orca_hardware.py) ──
+# La cámara da un objetivo nuevo solo ~10-15 veces por segundo. Antes se mandaba tal
+# cual a los servos DESDE el bucle de la cámara → tirón y parada en cada fotograma
+# (la "escalera" del PASO 7.1, pero en la mano real). Ahora un hilo propio manda un
+# comando CONTINUO a ORCA_HW_HZ: interpola entre fotogramas y limita velocidad y
+# aceleración de cada articulación (mismo algoritmo que GeneradorSuave del brazo).
+ORCA_HW_HZ            = 50     # envíos/s a los servos (17 motores a 1 Mbps ≈ 1-2 ms por envío)
+ORCA_HW_INTERPOLAR    = True   # reparte cada objetivo entre dos fotogramas (≈1 fotograma de retraso)
+ORCA_HW_VEL_MAX       = 6.0    # rad/s máx. por articulación (≈340°/s). Más bajo = más suave pero más retraso
+ORCA_HW_ACEL_MAX      = 60.0   # rad/s² máx. — más bajo = arranques y frenadas más suaves
+ORCA_HW_LIMITES_JOINT = {      # excepciones por articulación: "joint": (vel. máx, acel. máx)
+    "wrist": (3.0, 30.0),      # la muñeca mueve toda la mano: más despacio
+}
+ORCA_HW_DEBUG_TIEMPOS = True   # imprime los envíos/s reales y lo que tarda el SDK en cada envío
+ORCA_HW_DEBUG_CADA_S  = 5.0
+
+# ── Cámara ──
+# Hands en PARALELO: el recorte de la mano se calcula con la Pose del fotograma
+# ANTERIOR (la del actual aún no existe) y MediaPipe Hands corre en otro hilo mientras
+# el principal hace Pose y el brazo. Así el coste de Hands casi desaparece del bucle.
+# El margen del recorte (MANO_RECORTE_FACTOR) cubre lo que se mueve la mano entre dos
+# fotogramas; si en ese recorte no hay mano, se sigue como antes (recorte con la Pose
+# actual → imagen completa). False = todo en serie, como antes.
+MANO_EN_PARALELO = True
+
+# Perfil del bucle: cada PERFIL_BUCLE_CADA_S segundos imprime cuántos ms se van en cada
+# fase (cámara, pose, brazo, mano...). Sirve para ver QUÉ frena la cámara en cada
+# ordenador. Coste despreciable; pon False cuando ya no lo necesites.
+PERFIL_BUCLE        = True
+PERFIL_BUCLE_CADA_S = 3.0

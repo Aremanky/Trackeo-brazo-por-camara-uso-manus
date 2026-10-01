@@ -1,0 +1,99 @@
+"""
+Pipeline DepthAI de la OAK-D (color + estéreo para profundidad real).
+
+(Extraído de Skill_Shield_Nivel_6.py — código sin cambios, solo reubicado.)
+"""
+import depthai as dai
+
+from config import *
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PIPELINE DEPTHAI  (OAK-D: color + estéreo para profundidad real)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def crear_pipeline_oak(ancho: int = ANCHO_CAM, alto: int = ALTO_CAM) -> dai.Pipeline:
+    pipeline = dai.Pipeline()
+
+    cam_rgb = pipeline.create(dai.node.ColorCamera)
+    cam_rgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+    cam_rgb.setInterleaved(False)
+
+    if CAM_FOV_COMPLETO:
+        # ── SENSOR COMPLETO (4:3) ────────────────────────────────────────────
+        # El IMX378 es 4056x3040 (4:3). El modo 1080p es 16:9, y el firmware lo
+        # obtiene RECORTANDO franjas arriba y abajo → se pierde ~24 % de altura.
+        # Pidiendo 12 MP y reduciendo en el ISP (1/3 → 1352x1014) se conserva
+        # TODO el campo de visión vertical: VFOV ~42° → ~55°.
+        # 1352x1014 y 640x480 tienen exactamente la misma relación 4:3, así que
+        # el preview es un reescalado limpio, SIN recorte adicional.
+        cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_12_MP)
+        cam_rgb.setIspScale(1, 3)
+    else:
+        cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
+
+    cam_rgb.setPreviewSize(ancho, alto)
+    cam_rgb.setPreviewKeepAspectRatio(True)
+    cam_rgb.setFps(CAM_FPS)
+
+    mono_izq = pipeline.create(dai.node.MonoCamera)
+    mono_der = pipeline.create(dai.node.MonoCamera)
+    for cam, socket in [
+        (mono_izq, dai.CameraBoardSocket.CAM_B),
+        (mono_der, dai.CameraBoardSocket.CAM_C),
+    ]:
+        # THE_400_P es el modo "binned" del OV9282: usa el sensor ENTERO (1280x800)
+        # → mantiene todo el FOV vertical. NO cambiar a 720p: eso sí recorta.
+        cam.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        cam.setBoardSocket(socket)
+        cam.setFps(CAM_FPS)
+
+    stereo = pipeline.create(dai.node.StereoDepth)
+    stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+    stereo.setOutputSize(ancho, alto)   # misma medida que el color → mismos píxeles
+    stereo.setLeftRightCheck(True)      # descarta píxeles donde las dos cámaras no coinciden
+    stereo.setSubpixel(STEREO_SUBPIXEL) # profundidad más fina (menos "escalones")
+    if STEREO_EXTENDED:
+        stereo.setExtendedDisparity(True)
+
+    # ── Post-procesado EN LA CÁMARA (0 % de CPU del PC) ──────────────────────
+    # Los agujeros del mapa de profundidad sobre el brazo (superficie lisa, poco
+    # textura, movimiento) son la causa principal de que el brazo "se pierda":
+    # profundidad_robusta() devuelve None y la articulación se descarta entera.
+    if STEREO_FILTROS:
+        try:
+            _cfg = stereo.initialConfig.get()
+            _cfg.postProcessing.speckleFilter.enable      = True
+            _cfg.postProcessing.speckleFilter.speckleRange = 50
+            _cfg.postProcessing.spatialFilter.enable      = True
+            _cfg.postProcessing.spatialFilter.holeFillingRadius = STEREO_HOLE_FILLING
+            _cfg.postProcessing.spatialFilter.numIterations     = 1
+            _cfg.postProcessing.temporalFilter.enable    = bool(STEREO_TEMPORAL)
+            _cfg.postProcessing.thresholdFilter.minRange = int(PROF_Z_MIN * 1000)
+            _cfg.postProcessing.thresholdFilter.maxRange = int(PROF_Z_MAX * 1000)
+            stereo.initialConfig.set(_cfg)
+            print("🧹 [OAK] Filtros de profundidad activados "
+                  f"(hole-filling={STEREO_HOLE_FILLING}, temporal={STEREO_TEMPORAL})")
+        except Exception as _e_pp:
+            print(f"⚠️  [OAK] No se pudieron aplicar los filtros de profundidad: {_e_pp}")
+
+    mono_izq.out.link(stereo.left)
+    mono_der.out.link(stereo.right)
+
+    xout_c = pipeline.create(dai.node.XLinkOut)
+    xout_c.setStreamName("color")
+    cam_rgb.preview.link(xout_c.input)
+
+    # Imagen del ISP (1352x1014 con CAM_FOV_COMPLETO): mismo campo de visión que el
+    # preview pero 2,1x más píxeles. Solo se usa para recortar la mano (MANO_RECORTE_HD).
+    if MANO_RECORTE and MANO_RECORTE_HD and CAM_FOV_COMPLETO:
+        xout_hd = pipeline.create(dai.node.XLinkOut)
+        xout_hd.setStreamName("color_hd")
+        cam_rgb.isp.link(xout_hd.input)
+
+    xout_d = pipeline.create(dai.node.XLinkOut)
+    xout_d.setStreamName("depth")
+    stereo.depth.link(xout_d.input)
+
+    return pipeline
