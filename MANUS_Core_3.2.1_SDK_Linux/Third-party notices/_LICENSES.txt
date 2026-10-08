@@ -1,0 +1,64 @@
+Third-party components included in the ManusSDK binaries
+(ManusSDK.dll, libManusSDK-<arch>.so, libManusSDK-integrated-<arch>.so)
+and in the example client source shipped alongside them.
+
+Last audited: 2026-07-30 against the SDK build configuration.
+License texts are provided in the files next to this index.
+
+Included in all ManusSDK variants:
+
+Name                    Version     License (spdx.org/licenses/)                 URL                                              Notice file
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+spdlog                  1.8.5       MIT                                          https://github.com/gabime/spdlog                 spdlog.txt
+fmt (bundled w/ spdlog) 8.0.1       MIT                                          https://github.com/fmtlib/fmt                    fmt.txt
+RapidJSON               1.1         MIT                                          https://rapidjson.org/                           RapidJson.txt
+GLM                     0.9.9.9     Happy Bunny License / MIT                    https://github.com/g-truc/glm                    GLM.txt
+zlib                    1.3.1       Zlib                                         https://zlib.net/                                zlib.txt
+SLikeNet                0.1.3       MIT (mods) + RakNet BSD (Oculus VR, Inc.)    https://github.com/SLikeSoft/SLikeNet            SLikeNet.txt, SLikeNet_RakNet.txt
+HIDAPI                  0.14.0      BSD-3-Clause (chosen from tri-license)       https://github.com/libusb/hidapi                 HIDAPI.txt
+tiny-process-library    (2015-2020) MIT                                          https://gitlab.com/eidheim/tiny-process-library  TinyProcessLibrary.txt
+
+Included in ManusSDK.dll and libManusSDK-<arch>.so only
+(the networking stack; NOT in the libManusSDK-integrated-<arch>.so variants):
+
+Name                    Version     License (spdx.org/licenses/)                 URL                                              Notice file
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+gRPC                    1.28.1      Apache-2.0                                   https://github.com/grpc/grpc                     gRPC.txt
+Protobuf                3.11.2      BSD-3-Clause (Google)                        https://github.com/protocolbuffers/protobuf      Protobuf.txt
+libzmq                  4.3.4       LGPL-3.0-only + static linking exception     https://github.com/zeromq/libzmq                 libzmq.txt
+cppzmq                  ~4.6.0      MIT                                          https://github.com/zeromq/cppzmq                 cppzmq.txt
+c-ares                  1.15.0      MIT                                          https://c-ares.org/                              c-ares.txt
+upb                     (gRPC dep)  BSD-3-Clause (Google)                        https://github.com/protocolbuffers/upb           upb.txt
+abseil-cpp              (gRPC dep)  Apache-2.0                                   https://github.com/abseil/abseil-cpp             abseil-cpp.txt
+OpenSSL                 1.1.1w      OpenSSL / SSLeay dual license                https://www.openssl.org/                         OpenSSL.txt
+                        (OpenSSL is statically linked into the Linux .so builds only, not into ManusSDK.dll)
+
+Derived source code:
+
+Name                    Version     License (spdx.org/licenses/)                 URL                                              Notice file
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+CLZF2 / liblzf          3.4         BSD-2-Clause                                 https://github.com/nemequ/liblzf                 CLZF2.txt
+                        (no longer linked as a library; the SDK's network decompression routine is derived from CLZF2 source)
+
+Included in the SDKClient example application only
+(vendored source under SDKClient/third_party/, compiled into SDKClient; NOT part of the ManusSDK library):
+
+Name                    Version     License (spdx.org/licenses/)                 URL                                              Notice file
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+FTXUI                   6.1.9       MIT                                          https://github.com/ArthurSonzogni/FTXUI          FTXUI.txt
+
+Other components of the MANUS SDK package
+(this index covers the ManusSDK binaries and the example clients; the remaining parts of the
+package carry their own notices or are installed by the user and are not redistributed by MANUS):
+
+Component                                Third-party components / where to find their notices
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+MANUS Core Dashboard (Windows/Linux)     Ships its own "THIRD-PARTY NOTICES.txt" in its build folder.
+Python SDK (Python/manus_sdk)            Bundles the ManusSDK binaries covered above. Its runtime dependencies
+                                         (cffi, setuptools - both MIT) are installed by the user from PyPI and are
+                                         not redistributed. On Linux, cffi links the system libffi (MIT).
+ROS2 package (Linux packages only)       Built against ROS 2 Humble (rclcpp, rclpy, ament_cmake, rosidl -
+                                         Apache-2.0; std_msgs, geometry_msgs - BSD-3-Clause), installed by the user
+                                         from the ROS distribution and not redistributed. The optional
+                                         client_scripts visualizer uses NumPy (BSD-3-Clause), Open3D (MIT) and
+                                         loop_rate_limiters (MIT), also installed by the user via pip.

@@ -77,6 +77,11 @@ from orca_hardware import OrcaHardwareWrapper
 from skill_shield.vision.detectores import (
     detector_mano, detector_mano_recorte, detector_pose, mp_draw, mp_hands, mp_pose, mp_styles,
 )
+# — Dos cámaras OAK-D (MULTICAMARA_ACTIVA en config.py) —
+from skill_shield.vision.multicamara import (
+    abrir_dispositivo, CamaraSecundaria, cargar_extrinsecas, CAM_A_MXID, CAM_B_MXID,
+)
+from skill_shield.vision.fusion_brazo import FusorBrazo, calcular_angulos_brazo_multicamara
 from skill_shield.ia.act import (
     _listar_modelos_entrenados, _listar_tareas_grabadas, _nombre_seguro, cargar_ia,
     entrenar_ia, entrenar_todas_las_tareas, EPISODIOS_DIR, guardar_episodio, MODELOS_DIR,
@@ -105,6 +110,12 @@ from skill_shield.brazo.ik_codo_muneca import (
     FiltroOneEuro, lateral_mano_humana_mundo, objetivo_mano_hibrido, objetivos_codo_muneca,
     objetivos_codo_palma, peso_codo_humano, q6_para_orientacion, rescatar_ik,
     resolver_ik_codo_muneca, semilla_girada,
+    bloqueo_base, codo_fiable,                       # 7-oct: base estable + codo fiable
+)
+# — 7-oct: límites humanos de hombro y codo (limites_humanos.py, LIMITES_HUMANOS en config.py) —
+from skill_shield.brazo.limites_humanos import (
+    completar_hib, LIMITES_HUMANOS, LimitesHumanos, objetivos_codo_palma_fiel,
+    RETARGET_FIEL, semilla_codo_espejo,
 )
 from skill_shield.brazo.control_suave import (
     aplicar_modo_brazo, CanalFino, FiltroSaltos, fusionar_direccion, GeneradorSuave,
@@ -120,6 +131,7 @@ from skill_shield.mano.biomecanica import calcular_flexion_muneca
 from skill_shield.mano.retargeting import retarget_a_ctrl
 from skill_shield.vision.camara_oak import crear_pipeline_oak
 from skill_shield.simulacion.hilo_fisica import HiloFisica
+from skill_shield.mano.manus_guante import GuanteManus      # guantes MANUS (FUENTE_DEDOS)
 from skill_shield.interfaz.perfil import PerfilBucle
 
 # ── Compatibilidad: nombres que main() no usa pero que antes se podían importar
@@ -335,6 +347,14 @@ def main():
     pipeline = crear_pipeline_oak()
     salir    = False
 
+    # — Guante MANUS: dedos de la OrcaHand desde el guante (la muñeca sigue con la cámara) —
+    guante = None
+    if globals().get("FUENTE_DEDOS", "camara") == "manus":
+        guante = GuanteManus()
+        if not guante.iniciar():
+            print("⚠️  [MANUS] Sigo con los dedos de la CÁMARA.")
+            guante = None
+
     print("\n  Controles: [A] Activar | [S] Standby | [G] Grabar | "
           "[E] Entrenar tarea actual | [Shift+E] Entrenar todas | [P] Pelota ON/OFF | [I] Modo IA (red neuronal) | "
           "[M] Demo Maniobra Autónoma | [4] Taladro | [5] Demo taladro | [Q] Salir\n")
@@ -342,7 +362,7 @@ def main():
     # Asegurar que el destornillador empieza oculto (fuera de escena)
     _ocultar_destornillador(modelo, datos)
     estado["destornillador_visible"] = False
-    
+
     NOMBRE_VENTANA = "OrcaHand Teleop OAK-D + MuJoCo"  # sin em dash —
     cv2.namedWindow(NOMBRE_VENTANA, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(NOMBRE_VENTANA, int(ANCHO_CAM * ESCALA_VENTANA), int(ALTO_CAM * ESCALA_VENTANA))
@@ -380,7 +400,7 @@ def main():
             ESTADO_EVALUAR  = 4
             ESTADO_RESETEAR = 5
             ESTADO_EXITO    = 6
-            
+
             estado_maniobra = ESTADO_INICIO
             tiempo_estado   = 0.0
 
@@ -391,25 +411,25 @@ def main():
             print(f"🤖 Iniciando exploración estocástica. Intentos base: {len(lista_pinzas)}")
 
             while modo_autonomo and not salir:
-                dt = modelo.opt.timestep * 4 
+                dt = modelo.opt.timestep * 4
                 target_ctrl = np.array(datos.ctrl)
-                
+
                 nombre_pinza = lista_pinzas[intento_actual]
                 controles_pinza = PINZA_CTRL_CONTACTO[nombre_pinza]
 
                 if estado_maniobra == ESTADO_INICIO:
                     for i, v in enumerate(POSICION_STANDBY):
                         target_ctrl[i] = float(v)
-                    target_ctrl[0] = -0.40 
-                    
+                    target_ctrl[0] = -0.40
+
                     if tiempo_estado > 1.0:
                         # Generar ruido aleatorio para este intento específico
                         # La muñeca variará entre +/- 0.15 radianes de su posición ideal (0.55)
                         ruido_muneca = np.random.uniform(-0.15, 0.15)
-                        
+
                         # Cada dedo de la pinza tendrá una variación de +/- 10% en su fuerza
                         ruido_dedos = {idx: np.random.uniform(-0.10, 0.10) for idx in controles_pinza.keys()}
-                        
+
                         estado_maniobra = ESTADO_BAJAR
                         tiempo_estado = 0.0
 
@@ -427,18 +447,18 @@ def main():
                         val_con_ruido = val + ruido_dedos[idx]
                         lo, hi = LIMITES_CTRL[idx]
                         target_ctrl[idx] = float(np.clip(val_con_ruido, lo, hi))
-                        
-                    if tiempo_estado > 1.5: 
+
+                    if tiempo_estado > 1.5:
                         estado_maniobra = ESTADO_SUBIR
                         tiempo_estado = 0.0
 
                 elif estado_maniobra == ESTADO_SUBIR:
-                    target_ctrl[0] = -0.60 
+                    target_ctrl[0] = -0.60
                     for idx, val in controles_pinza.items():
                         val_con_ruido = val + ruido_dedos[idx]
                         lo, hi = LIMITES_CTRL[idx]
                         target_ctrl[idx] = float(np.clip(val_con_ruido, lo, hi))
-                        
+
                     if tiempo_estado > 2.0:
                         estado_maniobra = ESTADO_EVALUAR
                         tiempo_estado = 0.0
@@ -446,7 +466,7 @@ def main():
                 elif estado_maniobra == ESTADO_EVALUAR:
                     jnt_id = mujoco.mj_name2id(modelo, mujoco.mjtObj.mjOBJ_JOINT, "phillips_screwdriver_joint")
                     qa = modelo.jnt_qposadr[jnt_id]
-                    z_objeto = datos.qpos[qa + 2] 
+                    z_objeto = datos.qpos[qa + 2]
 
                     if z_objeto > 0.26:
                         print(f"✅ ¡ÉXITO! Pinza '{nombre_pinza}' (Ruido muñeca: {ruido_muneca:+.2f}). Z={z_objeto:.2f}m")
@@ -459,8 +479,8 @@ def main():
                 elif estado_maniobra == ESTADO_RESETEAR:
                     for i, v in enumerate(POSICION_STANDBY):
                         target_ctrl[i] = float(v)
-                    target_ctrl[0] = -0.60 
-                    
+                    target_ctrl[0] = -0.60
+
                     if tiempo_estado > 1.5:
                         # Variación al respawn del destornillador
                         _spawn_destornillador(modelo, datos)
@@ -469,12 +489,12 @@ def main():
                         datos.qpos[qa] += np.random.uniform(-0.01, 0.01)   # Variar X +/- 1cm
                         datos.qpos[qa+1] += np.random.uniform(-0.01, 0.01) # Variar Y +/- 1cm
                         mujoco.mj_forward(modelo, datos)
-                        
+
                         intento_actual += 1
                         if intento_actual >= len(lista_pinzas):
                             print("🔄 Reiniciando ciclo de pinzas con nuevos valores aleatorios.")
                             intento_actual = 0
-                            
+
                         estado_maniobra = ESTADO_INICIO
                         tiempo_estado = 0.0
 
@@ -491,30 +511,30 @@ def main():
 
                 tiempo_estado += dt
 
-                FACTOR_SUAVIZADO = 0.08 
+                FACTOR_SUAVIZADO = 0.08
                 for i, (lo, hi) in enumerate(LIMITES_CTRL):
                     ctrl_mano[i] = float(np.clip(
                         ctrl_mano[i] * (1.0 - FACTOR_SUAVIZADO) + target_ctrl[i] * FACTOR_SUAVIZADO, lo, hi))
 
                 if visor.is_running():
-                    for _ in range(4): 
+                    for _ in range(4):
                         mujoco.mj_step(modelo, datos)
                     visor.sync()
                     # ── Logo IDI — HUD inferior centrado del visor MuJoCo ────
                     _dibujar_logo_mujoco(visor, _logo_mj_px,
                                          _logo_mj_w, _logo_mj_h)
                 else:
-                    salir = True 
+                    salir = True
 
                 # --- HUD ---
                 panel = np.zeros((180, 450, 3), dtype=np.uint8)
                 nombres_estado = ["INICIO", "BAJANDO", "CERRANDO", "SUBIENDO", "EVALUANDO", "RESETEANDO", "¡EXITO!"]
-                
+
                 cv2.putText(panel, f"MODO AUTONOMO - VARIACION ACTIVA", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
                 cv2.putText(panel, f"Prueba: '{nombre_pinza}'", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 150, 0), 2)
                 cv2.putText(panel, f"Variacion Muneca: {ruido_muneca:+.2f} rad", (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
                 cv2.putText(panel, f"Fase: {nombres_estado[estado_maniobra]}", (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
+
                 color_hud = (0, 255, 0) if estado_maniobra == ESTADO_EXITO else (200, 200, 200)
                 cv2.putText(panel, f"T. de fase:  {tiempo_estado:.2f} s", (10, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_hud, 1)
                 cv2.putText(panel, "[S] Salir al teleop  |  [Q] Cerrar app", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
@@ -784,7 +804,9 @@ def main():
         else:
             print("⚡ Conectando OAK-D (puede tardar ~2 s)...")
 
-            with dai.Device(pipeline) as device:
+            with abrir_dispositivo(pipeline, CAM_A_MXID, excluir=(CAM_B_MXID,)) as device, \
+                    (CamaraSecundaria(excluir=(device.getMxId(),)) if MULTICAMARA_ACTIVA
+                     else nullcontext()) as cam_b:
                 # ── FLUIDEZ: ¿USB3? Con color + recorte HD + profundidad a 30 FPS se
                 # mandan ~108 MB/s (~860 Mbit/s); por USB2 (máx. 480 Mbit/s) no caben
                 # y los fotogramas llegan tarde o se pierden. ──
@@ -836,6 +858,19 @@ def main():
                 except Exception as e_cal:
                     f_px_cam = F_PX
                     print(f"⚠️  No se pudo leer la calibración ({e_cal}); uso F_PX={F_PX}")
+
+                # ── DOS CÁMARAS: extrínsecos A↔B y fusor del brazo ──
+                fusor_b = None
+                ent_b   = None
+                if cam_b is not None:
+                    _ext = cargar_extrinsecas(device.getMxId(), cam_b.mxid)
+                    if _ext is not None:
+                        fusor_b = FusorBrazo(_ext[0], _ext[1], BRAZO_HUMANO)
+                        print(f"🔀 Fusión A+B activa (calibración {_ext[2].get('metodo', '?')}, "
+                              f"{_ext[2].get('n_muestras', '?')} muestras)")
+                    else:
+                        print("⚠️  Cámara B abierta SIN extrínsecos: se muestra, pero NO se fusiona. "
+                              "Ejecuta  python calibrar_extrinseca.py")
 
                 angulos_brazo    = None   # últimos ángulos válidos del brazo humano
                 t_ult_ang_valido = 0.0    # perf_counter() del último frame con _ang != None
@@ -903,10 +938,19 @@ def main():
                 dirs_ok       = None     # últimas direcciones (brazo, antebrazo) aceptadas
                 brazo_fino, brazo_congelado = False, False
                 q6_obj_prev   = None     # último objetivo fiable del giro (modo mundo)
+                lim_humanos   = LimitesHumanos()   # 7-oct: tu postura dentro del rango anatómico
 
                 # — Física en tiempo real en su propio hilo (ver HiloFisica) —
+                def _antes_de_paso(m_, d_, dt_):
+                    """Antes de cada mj_step: brazo continuo (PASO 7.1) + dedos del guante."""
+                    if gen_brazo is not None:
+                        gen_brazo.paso(m_, d_, dt_)
+                    if guante is not None:
+                        guante.escribir_ctrl(d_, dt_)
+
                 fisica  = HiloFisica(modelo, datos, visor,
-                                     antes_de_paso=gen_brazo.paso if gen_brazo is not None else None) \
+                                     antes_de_paso=_antes_de_paso
+                                     if (gen_brazo is not None or guante is not None) else None) \
                           if FISICA_EN_HILO else None
                 _soltar = fisica.soltar if fisica is not None else nullcontext
                 if fisica is not None:
@@ -974,9 +1018,9 @@ def main():
                         _ahora  = time.perf_counter()
                         _fps_val = _fps_n / max(1e-6, _ahora - _fps_t0)
                         _fps_n, _fps_t0 = 0, _ahora
-                        if POSE_MEDIR_FPS:
-                            print(f"\r⏱️  Bucle teleop: {_fps_val:5.1f} FPS   ",
-                                  end="", flush=True)
+                        #if POSE_MEDIR_FPS:
+                        #   print(f"\r⏱️  Bucle teleop: {_fps_val:5.1f} FPS   ",
+                        #        end="", flush=True)
 
                     frame_rgb   = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                     frame_rgb.flags.writeable = False   # evita una copia en MediaPipe
@@ -1000,11 +1044,15 @@ def main():
                                                         detector_mano_recorte, frame_limpio, caja_par)
 
 
+                    # — DOS CÁMARAS: la Pose de B corre en su hilo mientras A hace la suya —
+                    fut_cam_b = cam_b.lanzar(_t_color) if cam_b is not None else None
+
                     # — Detección de CUERPO (solo visual por ahora) —
                     # Se dibuja ANTES que la mano para que los dedos queden encima.
                     with _soltar():                   # MediaPipe Pose: la física sigue
                         resultado_pose = detector_pose.process(frame_rgb)
                     pose_lm_prev = resultado_pose.pose_landmarks   # FLUIDEZ: recorte del siguiente fotograma
+                    ent_b = cam_b.recoger(fut_cam_b) if fut_cam_b is not None else None
                     if perfil is not None:
                         perfil.marca("pose")
                     if MOSTRAR_ESQUELETO_CUERPO and resultado_pose.pose_landmarks:
@@ -1018,10 +1066,17 @@ def main():
                         _calib_antes = est_brazo.calibrando   # ¿estamos aún en la T-pose de calibración?
                         _ang_mp = calcular_angulos_brazo_humano(
                             resultado_pose.pose_world_landmarks, BRAZO_HUMANO)
-                        _ang_es = calcular_angulos_brazo_estereo(
-                            resultado_pose.pose_landmarks, frame_depth, f_px_cam, BRAZO_HUMANO,
-                            estimador=est_brazo,
-                            pose_world_lm=resultado_pose.pose_world_landmarks)
+                        if fusor_b is not None:
+                            _ang_es = calcular_angulos_brazo_multicamara(
+                                fusor_b,
+                                (resultado_pose.pose_landmarks, resultado_pose.pose_world_landmarks,
+                                 frame_depth, f_px_cam),
+                                ent_b, BRAZO_HUMANO, est_brazo)
+                        else:
+                            _ang_es = calcular_angulos_brazo_estereo(
+                                resultado_pose.pose_landmarks, frame_depth, f_px_cam, BRAZO_HUMANO,
+                                estimador=est_brazo,
+                                pose_world_lm=resultado_pose.pose_world_landmarks)
                         _ang = _ang_es if BRAZO_FUENTE_3D == "estereo" else _ang_mp
                         # FUSIÓN DE DIRECCIONES (28-sep): el estéreo daba codos de 86-106°
                         # con el brazo casi recto (MediaPipe: 12-36°). Cada segmento (brazo,
@@ -1092,7 +1147,7 @@ def main():
                         # (giro de antebrazo y muñeca) se quedan en su valor de standby.
                         #
                         # _ang_uso: si el frame actual falló (depth ruidosa, oclusión de
-                        # un instante) pero tenemos un ángulo válido de hace poco (< 
+                        # un instante) pero tenemos un ángulo válido de hace poco (<
                         # ANG_BRAZO_HOLD_S), lo seguimos usando en vez de congelar el brazo.
                         # Si ya ha pasado más tiempo que eso, se considera que el brazo se
                         # ha perdido de verdad y no se actualiza (mejor que "adivinar").
@@ -1145,6 +1200,8 @@ def main():
                                           "El brazo no se mueve al calibrar.")
                                 suav_brazo.reset()
                                 hib = preparar_hibrido(modelo, datos, qpos_idx_brazo)
+                                if LIMITES_HUMANOS:   # 7-oct: límites de hombro/codo/suelo en la IK
+                                    completar_hib(modelo, datos, hib)
                                 q_ik_prev = None
                                 suav_obj.reset()
                                 suav_codo.reset()
@@ -1197,6 +1254,9 @@ def main():
 
                                 def _objetivos(db, da):
                                     if HIBRIDO_OBJETIVO == "palma":
+                                        if LIMITES_HUMANOS and RETARGET_FIEL and "L1_ef" in hib:
+                                            # 7-oct: tu brazo recto = brazo del robot recto
+                                            return objetivos_codo_palma_fiel(datos, db, da, hib, _lon_h)
                                         return objetivos_codo_palma(datos, db, da, hib, _lon_h)
                                     return objetivos_codo_muneca(datos, db, da, hib)
 
@@ -1216,8 +1276,12 @@ def main():
                                     _d_a = _unitario(oe_antebrazo(_d_a, _t_oe))
                                     if _d_b is None or _d_a is None:
                                         _d_b, _d_a = _d_b0, _d_a0
+                                _d_b, _d_a = lim_humanos(_d_b, _d_a)   # 7-oct: rango anatómico
                                 _d_a = enderezar(_d_b, _d_a)
                                 _w_c = peso_codo_humano(_d_b, _d_a)
+                                _codo_ok = codo_fiable(_ang_uso)
+                                if HIBRIDO_CODO_SOLO_FIABLE and not _codo_ok:
+                                    _w_c *= HIBRIDO_CODO_DUDOSO   # 7-oct: codo dudoso → manda la palma
                                 _oc, _om = _objetivos(_d_b, _d_a)
                                 if not FILTRO_ONE_EURO:   # sin One Euro: medias móviles de antes
                                     _oc = suav_codo.actualizar(_oc)
@@ -1236,7 +1300,9 @@ def main():
                                     _q_ik, _ec_ik, _em_ik = resolver_ik_codo_muneca(
                                         modelo, datos, _oc, _om, _w_c, hib,
                                         q_inicial=q_ik_prev if q_ik_prev is not None else _q_obj,
-                                        q_ref=q_ik_prev, w_cont=IK_PESO_CONTINUIDAD)
+                                        q_ref=q_ik_prev, w_cont=IK_PESO_CONTINUIDAD,
+                                        # 7-oct: brazo vertical → la base no se mueve
+                                        bloqueados=bloqueo_base(hib) if q_ik_prev is not None else None)
 
                                 # PASO 6: RESCATE — si lleva un rato atascada (o está "girada"),
                                 # probar otras posturas de partida. Todo se compara por COSTE:
@@ -1260,6 +1326,12 @@ def main():
                                             and _w_c >= 0.9 * HIBRIDO_PESO_CODO:
                                         _semillas += [("codo al otro lado", semilla_girada(_q_ik)),
                                                       ("codo al otro lado (ángulos)", semilla_girada(_q_obj))]
+                                    # 7-oct: posturas del brazo HUMANO que la IK no encuentra
+                                    # sola (p.ej. mano a la cara: brazo arriba y codo plegado)
+                                    if LIMITES_HUMANOS and "q3_recto" in hib:
+                                        _semillas += [("codo espejo", semilla_codo_espejo(_q_ik, hib)),
+                                                      ("codo plegado arriba", np.clip(
+                                                          [_q_ik[0], 0.0, 0.0], hib["lo"], hib["hi"]))]
                                     _q_r, _err_r, _c_r, _nom_r = rescatar_ik(
                                         modelo, datos, _oc, _om, _w_c, hib, _semillas,
                                         q_actual=_q_ik, q1_ref=_q1_ref)
@@ -1295,6 +1367,9 @@ def main():
                                 _q_obj = (1.0 - peso_hib) * np.asarray(_q_obj) + peso_hib * _q_ik
                                 for _k, _jn in enumerate(("joint1", "joint2", "joint3")):
                                     _q_obj[_k] = float(np.clip(_q_obj[_k], *IMITAR_LIMITES[_jn]))
+                            if LIMITES_HUMANOS and hib is not None:
+                                # 7-oct: también en modo "solo ángulos" [H]: límites humanos+suelo
+                                _q_obj = np.clip(np.asarray(_q_obj, dtype=float), hib["lo"], hib["hi"])
                             if not (FILTRO_ONE_EURO and ik_info is not None):
                                 _q_obj = suav_brazo.actualizar(_q_obj)   # (con One Euro ya viene filtrado)
                             if gen_brazo is not None and gen_brazo.activo:
@@ -1335,8 +1410,11 @@ def main():
                                         _om - (datos.xpos[hib["b_mano"]]
                                                + datos.xmat[hib["b_mano"]].reshape(3, 3) @ hib["off_punta"]))
                                     print(f"[HIBRIDO codo+muñeca] error codo={100 * _ec:4.1f} cm "
-                                          f"(peso {_w_c:.2f})   error muñeca={100 * _em:4.1f} cm   "
-                                          f"muñeca obj=({_om[0]:.2f}, {_om[1]:.2f}, {_om[2]:.2f}) m")
+                                          f"(peso {_w_c:.2f}{'' if _codo_ok else ', dudoso'})   "
+                                          f"error muñeca={100 * _em:4.1f} cm   "
+                                          f"muñeca obj=({_om[0]:.2f}, {_om[1]:.2f}, {_om[2]:.2f}) m"
+                                          + (f"   base fija" if bloqueo_base(hib)[0] else "")
+                                          + (f"   {lim_humanos.texto()}" if LIMITES_HUMANOS else ""))
                                 if _obj_mano is not None:
                                     _bm = mujoco.mj_name2id(modelo, mujoco.mjtObj.mjOBJ_BODY, "mano_mount")
                                     _err = np.linalg.norm(_obj_mano - datos.xpos[_bm])
@@ -1524,7 +1602,7 @@ def main():
                             int(lm0.x * frame_depth.shape[1]),
                             int(lm0.y * frame_depth.shape[0])) or 0.40
                         x_m, y_m, _ = pixel_a_3d(px, py, z, f_px=f_px_cam)
-                        
+
                         # Convertir a frame de mano 3D
                         lm3d = landmarks_a_3d(hand_wlm, es_mano_izq=False)
 
@@ -1536,6 +1614,8 @@ def main():
                         if estado["camara_activa"]:
                             estado = retarget_a_ctrl(
                                 modelo, datos, lm3d, hand_wlm, estado, suav_dedos)
+                            if guante is not None:      # MANUS: los dedos son los del guante
+                                guante.restaurar_dedos(datos)
                             calc_m_hud = estado["calc_muneca"]
 
                             # ── Diagnóstico de pinzas ──
@@ -1669,7 +1749,7 @@ def main():
                         estado["pinza_habilitada"] = not estado.get("pinza_habilitada", True)
                         estado_txt = "HABILITADA" if estado["pinza_habilitada"] else "DESHABILITADA"
                         print(f"🤏 Detección de pinza predefinida: {estado_txt}.")
-                        
+
                         # Si se deshabilita mientras hacías una pinza, la forzamos a soltar
                         if not estado["pinza_habilitada"]:
                             estado["modo_pinza"] = False
@@ -1821,20 +1901,20 @@ def main():
                         # [1] — Toggle pelota + soporte universal
                         if not estado["pelota_visible"]:
                             _spawn_pelota(modelo, datos, estado["spawn_actual"]["pelota"])
-                            
+
                             # Solo spawneamos el soporte si la mano está en la posición "arriba"
                             if estado["spawn_actual"] == PUNTOS_SPAWN["arriba"]:
                                 _spawn_soporte(modelo, datos, estado["spawn_actual"]["soporte"])
-                            
+
                             estado["pelota_visible"] = True
                             print("🟡 Pelota SPAWNEADA.")
                         else:
                             _ocultar_pelota(modelo, datos)
-                            
+
                             # Ocultamos la mesa solo si el destornillador no la está usando en "arriba"
                             if not (estado.get("destornillador_visible", False) and estado["spawn_actual"] == PUNTOS_SPAWN["arriba"]):
                                 _ocultar_soporte(modelo, datos)
-                                
+
                             estado["pelota_visible"] = False
                             print("⬛ Pelota OCULTADA.")
 
@@ -1842,20 +1922,20 @@ def main():
                         # [2] — Toggle destornillador
                         if not estado.get("destornillador_visible", False):
                             _spawn_destornillador(modelo, datos, estado["spawn_actual"]["destornillador"])
-                            
+
                             # Si estamos en "arriba", traemos la mesa universal
                             if estado["spawn_actual"] == PUNTOS_SPAWN["arriba"]:
                                 _spawn_soporte(modelo, datos, estado["spawn_actual"]["soporte"])
-                                
+
                             estado["destornillador_visible"] = True
                             print("🔧 Destornillador SPAWNEADO.")
                         else:
                             _ocultar_destornillador(modelo, datos)
-                            
+
                             # Ocultamos la mesa solo si la pelota tampoco la necesita
                             if not estado["pelota_visible"]:
                                 _ocultar_soporte(modelo, datos)
-                                
+
                             estado["destornillador_visible"] = False
                             print("⬛ Destornillador OCULTADO.")
 
@@ -1976,6 +2056,11 @@ def main():
                     elif key == ord("q"):
                         salir = True
 
+                    # — Guante MANUS: manda sobre los dedos solo con la cámara ACTIVA ([A]) —
+                    if guante is not None:
+                        guante.aplicar = estado["camara_activa"]
+                        guante.haptica(modelo, datos)      # contactos de las yemas → vibración
+
                     # — Paso de simulación MuJoCo —
                     if visor.is_running():
                         # Si estamos en modo hardware, enviamos los datos a los servos
@@ -1992,6 +2077,8 @@ def main():
                             for _ in range(4):
                                 if gen_brazo is not None:        # PASO 7.1
                                     gen_brazo.paso(modelo, datos, modelo.opt.timestep)
+                                if guante is not None:           # dedos del guante MANUS
+                                    guante.escribir_ctrl(datos, modelo.opt.timestep)
                                 mujoco.mj_step(modelo, datos)
                             visor.sync()
                         # ── Logo IDI — HUD inferior centrado del visor MuJoCo ──
@@ -2012,6 +2099,11 @@ def main():
                     cv2.putText(frame_bgr, f"{_fps_val:4.1f} FPS", (10, 45),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                                 (0, 255, 0) if _fps_val >= 15 else (0, 165, 255), 1)
+                    if guante is not None:
+                        _txt_g = guante.estado_txt()
+                        cv2.putText(frame_bgr, _txt_g, (ANCHO_CAM - 290, 45),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                                    (0, 255, 0) if "OK" in _txt_g else (0, 165, 255), 1)
                     if grabando:
                         cv2.circle(frame_bgr, (ANCHO_CAM - 20, 20), 8, (0, 0, 255), -1)
                         cv2.putText(frame_bgr, "REC", (ANCHO_CAM - 60, 25),
@@ -2025,6 +2117,11 @@ def main():
                                         int(ALTO_CAM * ESCALA_VENTANA))),
                             _logo_bgr, _logo_alpha,
                             margen=12, posicion="top-left"))
+                    if cam_b is not None and MULTICAM_MOSTRAR_B:
+                        cam_b.dibujar_y_mostrar(
+                            pose_lm=ent_b[0] if ent_b else None,
+                            texto=(f"B {'OK' if ent_b else 'sin cuerpo'}"
+                                   + (f" | {fusor_b.resumen}" if fusor_b is not None else "")))
                     if perfil is not None:
                         perfil.marca("ventana")
                         perfil.informe()
@@ -2037,7 +2134,7 @@ def main():
                 if fisica is not None:
                     fisica.parar()
                     fisica = None
-                if gen_brazo is not None:        
+                if gen_brazo is not None:
                     gen_brazo.desactivar()
 
     # — Limpieza —
@@ -2047,16 +2144,18 @@ def main():
     detector_pose.close()
     if visor.is_running():
         visor.close()
-        
+
     if mano_real is not None:
         mano_real.desconectar()
-        
+    if guante is not None:
+        guante.cerrar()
+
     # Destruimos la ventana de Tkinter de forma segura al cerrar la app
     try:
         ventana.destroy()
     except:
         pass
-        
+
     print("👋 Fin del programa.")
 
 

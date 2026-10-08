@@ -301,39 +301,53 @@ def corregir_muneca_por_longitud(S, px, py, z_medida, L, ancho, alto, f_px, z_re
     return d * max(z, PROF_Z_MIN)
 
 
-def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
-                                   brazo: str = "derecho",
-                                   vis_min: float = POSE_VISIBILIDAD_MIN,
-                                   ancho: int = ANCHO_CAM, alto: int = ALTO_CAM,
-                                   estimador: "EstimadorLongitudesBrazo" = None,
-                                   pose_world_lm=None):
+class PuntosCamara:
     """
-    Ángulos del brazo usando la profundidad REAL de la OAK-D:
+    Puntos 3D del brazo medidos por UNA cámara, en el marco de ESA cámara
+    (x = derecha de la imagen, y = ABAJO, z = alejándose de la cámara).
+    Es el resultado de los pasos 1-3b de la medición estéreo; el paso 4 (comprobar o
+    reconstruir el codo) y los ángulos se hacen después, sobre estos puntos o sobre
+    los de varias cámaras fusionados (ver skill_shield/vision/fusion_brazo.py).
+    """
+    __slots__ = ("pts", "fuente", "vis", "codo_mp", "f_px")
+
+    def __init__(self, pts, fuente, vis, codo_mp, f_px):
+        self.pts     = pts       # {índice Pose: np.array 3D (m)}
+        self.fuente  = fuente    # {índice Pose: "E" | "E+" | "M" | "L"}
+        self.vis     = vis       # {índice Pose: visibilidad 0..1 de MediaPipe}
+        self.codo_mp = codo_mp   # codo con profundidad de MediaPipe (respaldo) o None
+        self.f_px    = f_px
+
+
+def puntos_brazo_estereo(pose_lm, frame_depth, f_px: float,
+                         brazo: str = "derecho",
+                         vis_min: float = POSE_VISIBILIDAD_MIN,
+                         ancho: int = ANCHO_CAM, alto: int = ALTO_CAM,
+                         estimador: "EstimadorLongitudesBrazo" = None,
+                         pose_world_lm=None, fallos: list = None,
+                         exigir_hombro_opuesto: bool = True):
+    """
+    Pasos 1-3b de la medición estéreo de UNA cámara:
       · posición en la imagen (x, y)  ← MediaPipe Pose (pose_landmarks, normalizados)
       · profundidad (z)               ← mapa estéreo, en el píxel de cada articulación
-    Cada articulación se proyecta a 3D con pixel_a_3d() y luego se calculan los
-    ángulos igual que con MediaPipe.
-
     Si una articulación no tiene profundidad estéreo válida, en vez de perder el
     brazo entero se rellena (ver PROF_RELLENO_MEDIAPIPE): parche más grande y, si
     tampoco, profundidad relativa de MediaPipe (pose_world_lm) anclada al estéreo.
 
-    Con un 'estimador':
-      · un codo con huesos de longitud imposible se RECONSTRUYE con hombro y muñeca
-      · si devuelve None, 'estimador.motivo_fallo' explica por qué
-    El resultado lleva "fuentes" (de dónde salió la profundidad de hombro/codo/muñeca:
-    E = estéreo, E+ = estéreo parche grande, M = MediaPipe anclado, R = reconstruido).
+    Devuelve un PuntosCamara, o None si faltan puntos imprescindibles (los motivos
+    se AÑADEN a la lista 'fallos').
+
+    exigir_hombro_opuesto=False (cámara SECUNDARIA, vista de lado): el hombro del otro
+    brazo suele quedar tapado por el torso y no hace falta, porque el marco del torso
+    se construye con los puntos de la cámara principal. Entonces el hombro se mide en
+    su propio píxel (con la cámara de lado la mano no lo tapa).
     """
     nombres = {PS_HOMBRO_IZQ: "hombro izq", PS_HOMBRO_DER: "hombro der",
                PS_CODO_IZQ: "codo izq",     PS_CODO_DER: "codo der",
                PS_MUNECA_IZQ: "muñeca izq", PS_MUNECA_DER: "muñeca der",
                PS_CADERA_IZQ: "cadera izq", PS_CADERA_DER: "cadera der"}
-    fallos = []
-
-    def fallar():
-        if estimador is not None:
-            estimador.motivo_fallo = "; ".join(fallos) if fallos else "puntos insuficientes"
-        return None
+    if fallos is None:
+        fallos = []
 
     lm  = pose_lm.landmark
     wl  = pose_world_lm.landmark if pose_world_lm is not None else None
@@ -357,13 +371,14 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
 
     # ── 1) Puntos imprescindibles VISIBLES en la imagen ───────────────────────
     codo_calibrable = estimador is not None and estimador.longitudes is not None
-    for i in (i_h, i_h2, i_m):
+    req = (i_h, i_h2, i_m) if exigir_hombro_opuesto else (i_h, i_m)
+    for i in req:
         if not usable(i):
             fallos.append(motivo_no_usable(i))
     if not usable(i_c) and not codo_calibrable:
         fallos.append(motivo_no_usable(i_c) + " (y sin huesos calibrados para reconstruirlo)")
     if fallos:
-        return fallar()
+        return None
 
     # ── 2) Profundidad estéreo de cada punto (parche normal → parche grande) ──
     def z_estereo(xn, yn, percentil):
@@ -378,14 +393,19 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
 
     z, fuente = {}, {}
     # Hombros: medidos en el PECHO (ver HOMBRO_PROF_HACIA_TORSO)
-    x_med = (lm[i_h].x + lm[i_h2].x) / 2.0
-    y_med = (lm[i_h].y + lm[i_h2].y) / 2.0
-    for i in (i_h, i_h2):
-        xs = lm[i].x + HOMBRO_PROF_HACIA_TORSO * (x_med - lm[i].x)
-        ys = lm[i].y + HOMBRO_PROF_HACIA_TORSO * (y_med - lm[i].y)
-        zi, f = z_estereo(xs, ys, 50)
+    if exigir_hombro_opuesto or usable(i_h2):
+        x_med = (lm[i_h].x + lm[i_h2].x) / 2.0
+        y_med = (lm[i_h].y + lm[i_h2].y) / 2.0
+        for i in (i_h, i_h2):
+            xs = lm[i].x + HOMBRO_PROF_HACIA_TORSO * (x_med - lm[i].x)
+            ys = lm[i].y + HOMBRO_PROF_HACIA_TORSO * (y_med - lm[i].y)
+            zi, f = z_estereo(xs, ys, 50)
+            if zi is not None:
+                z[i], fuente[i] = zi, f
+    else:                                  # cámara secundaria: solo el hombro del brazo
+        zi, f = z_estereo(lm[i_h].x, lm[i_h].y, 50)
         if zi is not None:
-            z[i], fuente[i] = zi, f
+            z[i_h], fuente[i_h] = zi, f
     for i in (i_c, i_m) + caderas:
         if usable(i):
             zi, f = z_estereo(lm[i].x, lm[i].y, PROF_PERCENTIL)
@@ -411,26 +431,15 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
     puede_mp = PROF_RELLENO_MEDIAPIPE and wl is not None and bool(anclas)
 
     # ── 3a) Estéreo de codo y muñeca VALIDADO con MediaPipe (idea del TRON 2) ──
-    # MediaPipe da una profundidad RELATIVA poco precisa pero nunca disparatada;
-    # el estéreo es preciso pero a veces lee el FONDO (pared tras la mano) o el
-    # torso. Se predice dónde debería estar cada punto (MediaPipe anclado al
-    # hombro) y, si el estéreo se aleja más de PROF_TOL_MEDIAPIPE, no se usa:
-    #   · codo con huesos calibrados → se descarta y se RECONSTRUYE (paso 4)
-    #   · muñeca (o codo sin huesos) → se usa la predicción de MediaPipe ("M!")
-    #
-    # CORRECCIÓN (28-sep): sustituir la MUÑECA por la predicción de MediaPipe
-    # mezclaba dos fuentes (codo del estéreo + muñeca de MediaPipe) y FABRICABA
-    # flexiones falsas: en T-pose el codo salía 75-86° (MediaPipe solo decía 26°).
-    # Ahora solo se valida el CODO, y solo con huesos calibrados: si no cuadra, se
-    # reconstruye con los huesos (su flexión depende solo de hombro-muñeca, que es
-    # estéreo). La muñeca sigue protegida por corregir_muneca_por_longitud (3b).
+    # (ver comentarios completos en la versión anterior de esta función: solo se valida
+    #  el CODO, y solo con huesos calibrados; la muñeca la protege el paso 3b.)
     if puede_mp and PROF_TOL_MEDIAPIPE > 0 and codo_calibrable:
         if i_c in z and fuente[i_c] != "M":
             if abs(z[i_c] - z_mediapipe(i_c)) > PROF_TOL_MEDIAPIPE:
                 del z[i_c], fuente[i_c]
     # El codo sin estéreo se prefiere RECONSTRUIR con los huesos (paso 4, más exacto);
     # MediaPipe solo se usa para él si no hay huesos calibrados.
-    necesarios = (i_h, i_h2, i_m) + ((i_c,) if usable(i_c) and not codo_calibrable else ())
+    necesarios = req + ((i_c,) if usable(i_c) and not codo_calibrable else ())
     for i in necesarios:
         if i in z:
             continue
@@ -439,8 +448,8 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
         else:
             fallos.append(f"{nombres[i]}: sin profundidad estéreo"
                           + ("" if anclas else " (ni en hombros ni en caderas)"))
-    if any(i not in z for i in (i_h, i_h2, i_m)):
-        return fallar()
+    if any(i not in z for i in req):
+        return None
 
     pts = {i: np.array(pixel_a_3d(lm[i].x * ancho, lm[i].y * alto, zi, ancho, alto, f_px))
            for i, zi in z.items()}
@@ -462,12 +471,38 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
         else:
             pts[i_m], fuente[i_m] = _W, "L"
 
+    # Respaldo del codo (paso 4): profundidad de MediaPipe anclada al estéreo
+    codo_mp = None
+    if puede_mp and usable(i_c):
+        codo_mp = np.array(pixel_a_3d(lm[i_c].x * ancho, lm[i_c].y * alto,
+                                      z_mediapipe(i_c), ancho, alto, f_px))
+
+    vis = {i: float(lm[i].visibility) for i in pts}
+    vis[i_c] = float(lm[i_c].visibility)
+    return PuntosCamara(pts, fuente, vis, codo_mp, f_px)
+
+
+def angulos_desde_puntos_3d(pts: dict, fuente: dict, vis_hcm: tuple, codo_mp,
+                            estimador, brazo: str, vis_min: float, fallos: list):
+    """
+    Pasos 4 y final de la medición estéreo, sobre unos puntos 3D YA medidos (de una
+    cámara o fusionados de varias; en ejes x=derecha, y=ABAJO, z=profundidad):
+      · comprueba el codo con las longitudes de los huesos y lo RECONSTRUYE si es falso
+      · calcula los ángulos y direcciones del brazo (marco del torso)
+    'vis_hcm' = (visibilidad hombro, codo, muñeca). 'pts' y 'fuente' se modifican.
+    Devuelve el dict de ángulos o None (motivos añadidos a 'fallos').
+    """
+    if brazo == "derecho":
+        i_h, i_c, i_m = PS_HOMBRO_DER, PS_CODO_DER, PS_MUNECA_DER
+    else:
+        i_h, i_c, i_m = PS_HOMBRO_IZQ, PS_CODO_IZQ, PS_MUNECA_IZQ
+
     # ── 4) Comprobación / reconstrucción del codo ─────────────────────────────
     codo_estimado = False
     if estimador is not None:
         codo_medido = pts.get(i_c)
         if codo_medido is not None and not estimador.codo_creible(
-                pts[i_h], codo_medido, pts[i_m], aprender=lm[i_c].visibility >= 0.7):
+                pts[i_h], codo_medido, pts[i_m], aprender=vis_hcm[1] >= 0.7):
             del pts[i_c]                        # codo falso → se intenta reconstruir
         if i_c not in pts:
             E = estimador.reconstruir_codo(pts[i_h], pts[i_m])
@@ -478,14 +513,12 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
                 # No se puede reconstruir (p.ej. codo MUY doblado, mano en el hombro):
                 # mejor el codo medido, aunque sea dudoso, que perder el brazo.
                 pts[i_c] = codo_medido
-            elif puede_mp and usable(i_c):
-                zc = z_mediapipe(i_c)
-                pts[i_c] = np.array(pixel_a_3d(lm[i_c].x * ancho, lm[i_c].y * alto,
-                                               zc, ancho, alto, f_px))
+            elif codo_mp is not None:
+                pts[i_c] = codo_mp
                 fuente[i_c] = "M"
     if i_c not in pts:
         fallos.append("codo: sin posición (ni medida ni reconstruible)")
-        return fallar()
+        return None
 
     res = _angulos_desde_puntos(
         lambda i: pts[i],
@@ -493,12 +526,49 @@ def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
         brazo, vis_min)
     if res is None:
         fallos.append("geometría degenerada (hombros superpuestos)")
-        return fallar()
+        return None
     res["codo_estimado"] = codo_estimado
-    res["vis"]     = (lm[i_h].visibility, lm[i_c].visibility, lm[i_m].visibility)
+    res["vis"]     = tuple(vis_hcm)
     res["fuentes"] = f"h:{fuente.get(i_h, '?')} c:{fuente.get(i_c, '?')} m:{fuente.get(i_m, '?')}"
     if estimador is not None:
         estimador.motivo_fallo = ""
+    return res
+
+
+def calcular_angulos_brazo_estereo(pose_lm, frame_depth, f_px: float,
+                                   brazo: str = "derecho",
+                                   vis_min: float = POSE_VISIBILIDAD_MIN,
+                                   ancho: int = ANCHO_CAM, alto: int = ALTO_CAM,
+                                   estimador: "EstimadorLongitudesBrazo" = None,
+                                   pose_world_lm=None):
+    """
+    Ángulos del brazo usando la profundidad REAL de la OAK-D (UNA cámara).
+    Es la composición de puntos_brazo_estereo() + angulos_desde_puntos_3d(); con dos
+    cámaras se fusionan los puntos entre ambas (fusion_brazo.py). Mismo resultado que
+    antes de separarla.
+
+    Con un 'estimador':
+      · un codo con huesos de longitud imposible se RECONSTRUYE con hombro y muñeca
+      · si devuelve None, 'estimador.motivo_fallo' explica por qué
+    El resultado lleva "fuentes" (de dónde salió la profundidad de hombro/codo/muñeca:
+    E = estéreo, E+ = estéreo parche grande, M = MediaPipe anclado, R = reconstruido).
+    """
+    fallos = []
+    pc = puntos_brazo_estereo(pose_lm, frame_depth, f_px, brazo, vis_min, ancho, alto,
+                              estimador, pose_world_lm, fallos)
+    if pc is None:
+        if estimador is not None:
+            estimador.motivo_fallo = "; ".join(fallos) if fallos else "puntos insuficientes"
+        return None
+    if brazo == "derecho":
+        i_h, i_c, i_m = PS_HOMBRO_DER, PS_CODO_DER, PS_MUNECA_DER
+    else:
+        i_h, i_c, i_m = PS_HOMBRO_IZQ, PS_CODO_IZQ, PS_MUNECA_IZQ
+    res = angulos_desde_puntos_3d(pc.pts, pc.fuente,
+                                  (pc.vis[i_h], pc.vis[i_c], pc.vis[i_m]),
+                                  pc.codo_mp, estimador, brazo, vis_min, fallos)
+    if res is None and estimador is not None:
+        estimador.motivo_fallo = "; ".join(fallos) if fallos else "puntos insuficientes"
     return res
 
 

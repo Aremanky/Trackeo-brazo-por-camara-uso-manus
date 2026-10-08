@@ -2,14 +2,24 @@
 Paso 7 — brazo preciso y sin saltos (generador suave, filtros, modo fino).
 
 (Extraído de Skill_Shield_Nivel_6.py — código sin cambios, solo reubicado.)
+
+7-oct — RETRASO: FiltroSaltos ya no congela el brazo durante los movimientos rápidos.
+Antes, cualquier movimiento a más de SALTO_VEL_MAX (1 m/s, muy por debajo de lo que
+se mueve una mano normal) se tomaba como "error de medida" y el robot se quedaba
+quieto hasta que el umbral crecía lo bastante (~1 s en un movimiento amplio). Ahora un
+salto solo se descarta si NO se repite: si SALTO_CONFIRMAR fotogramas seguidos siguen
+lejos de la última medida buena, es un movimiento real y se acepta.
 """
 import numpy as np
 import math
 
+import config as _cfg
 from config import *
 
 from skill_shield.brazo.ik_codo_muneca import _suavizado_01
 from skill_shield.brazo.angulos_humano import _unitario
+
+SALTO_CONFIRMAR = int(getattr(_cfg, "SALTO_CONFIRMAR", 1))   # fotogramas de "pico" que se ignoran
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -33,6 +43,10 @@ class GeneradorSuave:
 
     Solo gestiona los joints de 'indices' (joint1..3 y el del giro de muñeca). Si le
     llega un índice que no es suyo (p.ej. joint4/joint5), lo escribe directo en ctrl.
+
+    OJO: SUAVE_VEL_MAX es un TOPE de velocidad. Si es menor que la velocidad a la que
+    te mueves tú, el robot se queda atrás y el retraso crece con la amplitud del gesto
+    (90° a 1,2 rad/s = 1,3 s). Debe estar por encima de tu velocidad normal.
     """
 
     def __init__(self, indices, v_max, a_max):
@@ -102,34 +116,59 @@ class GeneradorSuave:
 
 class FiltroSaltos:
     """
-    PASO 7.2 — Rechaza medidas IMPOSIBLES antes de filtrarlas.
+    PASO 7.2 — Rechaza PICOS de medida (un fotograma suelto imposible) antes del One Euro.
 
-    Una mano humana no se teletransporta. Si el objetivo de la palma (o del codo)
-    del robot salta más de  SALTO_VEL_MAX · Δt + SALTO_MARGEN  respecto a la última
-    medida buena, es un error de medida (codo mal colocado, profundidad del fondo,
-    cambio de fuente estéreo↔MediaPipe...) y ese fotograma se ignora.
-    Importante: va ANTES del One Euro, porque el One Euro, al ver un cambio brusco,
-    cree que te mueves rápido y deja de filtrar → el error pasaba casi entero.
-    Si el 'salto' se mantiene, el umbral crece con el tiempo (Δt) y acaba
-    aceptándose: era un movimiento real.
+    Si el objetivo de la palma (o del codo) del robot salta más de
+    SALTO_VEL_MAX · Δt + SALTO_MARGEN respecto a la última medida buena, puede ser:
+      · un PICO (codo mal colocado, profundidad del fondo, cambio de fuente...): dura
+        1 fotograma y al siguiente la medida VUELVE cerca de la buena → se ignora;
+      · un MOVIMIENTO RÁPIDO real: al siguiente fotograma SIGUE lejos → se acepta.
+    Coste: SALTO_CONFIRMAR fotogramas (~33 ms) de espera al iniciar un gesto rápido.
+
+    Antes (hasta 7-oct) el umbral solo crecía con el tiempo, y como una mano normal
+    se mueve a 2-5 m/s (bastante más que SALTO_VEL_MAX), el brazo se quedaba QUIETO
+    hasta ~1 s en cada gesto amplio y luego saltaba: era la mitad del retraso.
+    Va ANTES del One Euro: si no, el One Euro ve el pico, cree que te mueves rápido y
+    deja de filtrar.
     """
 
     def __init__(self):
         self.reset()
 
+    VEL_TOPE = 6.0                     # m/s: tope de la velocidad estimada (predicción)
+
     def reset(self):
         self.ref, self.t_ref = None, None
+        self.vel = None                # velocidad de cada punto entre las 2 últimas medidas buenas
+        self.seguidos = 0              # fotogramas seguidos lejos de lo esperado
         self.rechazados = 0            # total (para el diagnóstico)
+
+    def _guardar(self, puntos, t):
+        if self.ref is not None and t - self.t_ref > 1e-3:
+            self.vel = []
+            for p, r in zip(puntos, self.ref):
+                v = (p - r) / (t - self.t_ref)
+                n = float(np.linalg.norm(v))
+                self.vel.append(v * (self.VEL_TOPE / n) if n > self.VEL_TOPE else v)
+        self.ref, self.t_ref, self.seguidos = puntos, t, 0
 
     def aceptar(self, puntos, t) -> bool:
         puntos = [np.asarray(p, dtype=float) for p in puntos]
         if self.ref is None or SALTO_VEL_MAX <= 0:
-            self.ref, self.t_ref = puntos, t
+            self._guardar(puntos, t)
             return True
-        limite = SALTO_VEL_MAX * (t - self.t_ref) + SALTO_MARGEN
-        salto  = max(float(np.linalg.norm(p - r)) for p, r in zip(puntos, self.ref))
+        dt = t - self.t_ref
+        # se compara con DONDE DEBERÍA ESTAR siguiendo el movimiento que ya llevaba
+        # (si no, en un gesto rápido sostenido se tiraría un fotograma de cada dos)
+        pred = [r + v * dt for r, v in zip(self.ref, self.vel)] if self.vel else self.ref
+        limite = SALTO_VEL_MAX * dt + SALTO_MARGEN
+        salto  = max(float(np.linalg.norm(p - q)) for p, q in zip(puntos, pred))
         if salto <= limite:
-            self.ref, self.t_ref = puntos, t
+            self._guardar(puntos, t)
+            return True
+        self.seguidos += 1
+        if self.seguidos > SALTO_CONFIRMAR:      # el "salto" se mantiene → es real
+            self._guardar(puntos, t)
             return True
         self.rechazados += 1
         return False

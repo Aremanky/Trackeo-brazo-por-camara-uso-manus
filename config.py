@@ -67,22 +67,22 @@ N_FRAMES_DEBOUNCE  = 10
 PUNTOS_SPAWN = {
     "arriba": {
         "pelota":         {"pos": ( 0.0, 0.08, 0.30), "euler": (0.0, 0.0, 0.0)},
-        "destornillador": {"pos": ( 0.0, 0.08, 0.30), "euler": (1.5708, 0.0, -1.70)}, 
+        "destornillador": {"pos": ( 0.0, 0.08, 0.30), "euler": (1.5708, 0.0, -1.70)},
         "soporte":        {"pos": ( 0.0, 0.09, 0.17), "euler": (0.0, 0.0, -0.3)}
     },
     "izquierda": {
         "pelota":         {"pos": ( 0.0, -10, 0.20),  "euler": (0.0, 0.0, 0.0)},
-        "destornillador": {"pos": ( 0.185, 0.035, 0.0), "euler": (0.0, 0.0, 0.0)},    
+        "destornillador": {"pos": ( 0.185, 0.035, 0.0), "euler": (0.0, 0.0, 0.0)},
         "soporte":        {"pos": ( 0.0, 0.0, 0.10),  "euler": (0.0, 0.0, 0.0)}
     },
     "abajo": {
         "pelota":         {"pos": ( 0.0, 0.2, -0.05), "euler": (0.0, 0.0, 0.0)},
-        "destornillador": {"pos": ( -0.005, 0.2, -0.05), "euler": (1.5708, 0.0, -1.70)}, 
+        "destornillador": {"pos": ( -0.005, 0.2, -0.05), "euler": (1.5708, 0.0, -1.70)},
         "soporte":        {"pos": ( 0.0, 0.0, 0.10),  "euler": (0.0, 0.0, 0.0)}
     },
     "derecha": {
         "pelota":         {"pos": ( 0.0, -0.20, 0.25), "euler": (0.0, 0.0, 0.0)},
-        "destornillador": {"pos": ( 0.02, -0.20, 0.0), "euler": (1.5708, 0.0, -1.70)},    
+        "destornillador": {"pos": ( 0.02, -0.20, 0.0), "euler": (1.5708, 0.0, -1.70)},
         "soporte":        {"pos": ( 0.0, 10.0, -10.10), "euler": (0.0, 0.0, 0.0)}
     }
 }
@@ -180,11 +180,11 @@ PINZA_UMBRAL_OFF = {
     "corazon_anular": 0.050, "indice_corazon": 0.050, "anular_menique": 0.050
 }
 
-_UMBRAL_COMBO_ON   = {"corazon": 0.035, "anular": 0.040}   
+_UMBRAL_COMBO_ON   = {"corazon": 0.035, "anular": 0.040}
 _UMBRAL_COMBO_OFF  = {"corazon": 0.045, "anular": 0.050}
-_UMBRAL_COMBO2_ON  = {"indice": 0.040, "corazon": 0.045}  
+_UMBRAL_COMBO2_ON  = {"indice": 0.040, "corazon": 0.045}
 _UMBRAL_COMBO2_OFF = {"indice": 0.050, "corazon": 0.055}
-_UMBRAL_COMBO3_ON  = {"anular": 0.040, "menique": 0.040}  
+_UMBRAL_COMBO3_ON  = {"anular": 0.040, "menique": 0.040}
 _UMBRAL_COMBO3_OFF = {"anular": 0.050, "menique": 0.050}
 
 PINZA_DIST_MAX = 0.120
@@ -488,7 +488,8 @@ PROF_TOL_MEDIAPIPE = 0.12
 # "muneca":      el híbrido anterior (solo la muñeca, escalada por el alcance).
 # [H] sigue alternando entre el híbrido elegido aquí y "solo ángulos".
 HIBRIDO_MODO       = "codo_muneca"
-HIBRIDO_PESO_CODO  = 0.4            # (antes 0.6) importancia del codo frente a la muñeca (0 = solo muñeca)
+HIBRIDO_PESO_CODO  = 0.15           # (antes 0.4; 7-oct: el codo medido era poco fiable y tiraba de
+                                    # la postura) importancia del codo frente a la muñeca (0 = solo muñeca)
 HIBRIDO_CODO_RECTO = (10.0, 30.0)   # grados de flexión: <10 el codo no cuenta, >30 cuenta entero
 ZONA_MUERTA_CODO   = (5.0, 25.0)    # grados: <5 se trata como brazo recto, hasta 25 se atenúa
 
@@ -689,45 +690,105 @@ MANO_EN_PARALELO = True
 PERFIL_BUCLE        = True
 PERFIL_BUCLE_CADA_S = 3.0
 
-# ══════════════════════════════════════════════════════════════════════════════
-# GUANTE MANUS (preparación 1-oct) — PEGAR AL FINAL DE config.py
-# ══════════════════════════════════════════════════════════════════════════════
-# De dónde salen los dedos en probar_guante.py (más adelante también en el teleop):
-#   "simulado" → barras deslizantes (sin guante ni licencia)
-#   "manus"    → SDK de Python de MANUS
-FUENTE_GUANTE = "simulado"
+# ═══════════════════════════════════════════════════════════════════════════
+# DOS CÁMARAS OAK-D — pega este bloque al final de config.py
+# ═══════════════════════════════════════════════════════════════════════════
+MULTICAMARA_ACTIVA  = True   # True → abre la cámara B y fusiona el brazo (False = comportamiento de siempre)
+CAM_A_MXID          = "1944301001AAFA1700"    # MxId de la cámara principal (None = la primera libre). Fíjalos cuando ya funcione.
+CAM_B_MXID          = "1944301081B5FA4800"    # MxId de la cámara secundaria. Se ven con:  python -c "from skill_shield.vision.multicamara import listar_camaras as l; print(l())"
+EXTRINSECAS_ARCHIVO = "camaras_extrinsecas.json"   # lo genera calibrar_extrinseca.py
+MULTICAM_SYNC_MAX_S = 0.04    # máx. desfase (s) entre el fotograma de A y el de B para emparejarlos
+MULTICAM_MOSTRAR_B  = True    # ventana de depuración "Camara B"
+CAM_B_IR_MA         = 800     # proyector IR de la B (mA)
 
-# "integrado" → guantes/dongle por USB en ESTE PC con Ubuntu (no hace falta MANUS Core)
-# "local"     → MANUS Core corriendo en este mismo PC (solo Windows)
-# "remoto"    → MANUS Core corriendo en otro PC Windows de la red
-MANUS_MODO       = "integrado"
-MANUS_LADO       = "derecha"   # guante que mueve la OrcaHand derecha
-MANUS_TIMEOUT_S  = 0.3         # s sin datos → se considera perdido (la mano se queda quieta)
-MANUS_REINTENTOS = 10          # intentos de conexión al arrancar
-MANUS_DEBUG      = True        # imprime lo necesario para verificar el SDK el miércoles
-MANUS_SUAVIZADO  = 0.5         # 0..1 → 1 = sin suavizar, más bajo = más suave (más retraso)
+# Fusión: incertidumbre de cada medida (σ_z = K·z², lateral = σ_pix·z/f) y rechazo de discrepancias
+FUSION_SIGMA_PIX    = 4.0     # error típico de MediaPipe en la imagen (px)
+FUSION_SIGMA_Z_K    = 0.006   # σ_z = 0,006·z² → 2,4 cm a 2 m (súbelo si tu estéreo es peor)
+FUSION_K_FUENTE     = {"E": 1.0, "E+": 1.6, "L": 3.0, "M": 6.0}   # fiabilidad relativa de cada fuente de profundidad
+FUSION_GATE_CHI2    = 16.0    # por encima, las dos cámaras "discrepan" y se elige UNA (no se promedia)
+FUSION_LR_MARGEN_M  = 0.10    # detecta izquierda/derecha intercambiados en la vista de perfil
+FUSION_MEMORIA_S    = 0.5     # validez del último punto bueno para desempatar
 
-# ctrl de la mano ← valor del guante (grados):
-#     q = offset + signo · escala · radianes(valor)
-# VALORES DE PARTIDA: los signos y escalas se ajustan con probar_guante.py.
-# Una tupla de claves = media (p.ej. ("index_pip_stretch", "index_dip_stretch")).
-MANUS_MAPEO = {
-    #  ctrl   (clave del guante,     signo, escala, offset rad)
-    1:  ("pinky_mcp_spread",   -1.0, 1.0,  0.15),
-    2:  ("pinky_mcp_stretch",   1.0, 1.0,  0.0),
-    3:  ("pinky_pip_stretch",   1.0, 1.0,  0.0),
-    4:  ("ring_mcp_spread",    -1.0, 1.0,  0.0),
-    5:  ("ring_mcp_stretch",    1.0, 1.0,  0.0),
-    6:  ("ring_pip_stretch",    1.0, 1.0,  0.0),
-    7:  (None,                  0.0, 0.0,  0.0),     # corazón abd: fijo
-    8:  ("middle_mcp_stretch",  1.0, 1.0,  0.0),
-    9:  ("middle_pip_stretch",  1.0, 1.0,  0.0),
-    10: ("index_mcp_spread",    1.0, 1.0,  0.0),
-    11: ("index_mcp_stretch",   1.0, 1.0,  0.0),
-    12: ("index_pip_stretch",   1.0, 1.0,  0.0),
-    # Pulgar — PROVISIONAL, se calibra con el guante puesto
-    13: ("thumb_mcp_stretch",   1.0, 1.0, -0.0979),  # oposición (CMC)
-    14: ("thumb_mcp_spread",   -1.0, 1.0,  0.641),   # abducción
-    15: ("thumb_pip_stretch",   1.0, 1.0,  0.0),     # MCP anatómico
-    16: ("thumb_dip_stretch",   1.0, 1.0,  0.0),     # IP
+# ═══════════════════════════════════════════════════════════════════════════
+# REVISIÓN 7-OCT — IMITACIÓN MÁS NATURAL (vídeo 12:41)
+# ═══════════════════════════════════════════════════════════════════════════
+# 1) ESPACIO DE TRABAJO. Tu hombro está a ~1,4 m del suelo y el del ARCTOS a 0,29 m:
+#    con tu brazo por debajo de la horizontal, el objetivo de la palma caía bajo el
+#    suelo y se recortaba (error de 50-80 cm, IK desesperada, choques con el suelo).
+#    Ahora la mitad de abajo se COMPRIME al rango que el robot sí alcanza: de la
+#    horizontal hacia arriba 1:1; hacia abajo, proporcional hasta estos mínimos.
+#    Si en la escena el ARCTOS va sobre una peana o una mesa, se adapta solo (se mide
+#    desde la altura real de su hombro).
+REUBICAR_OBJETIVOS = True    # False = comportamiento anterior (recorte a ARM_Z_MINIMA)
+COMPRIMIR_ABAJO    = True
+PALMA_Z_MIN        = 0.15    # m: altura mínima del centro de la palma (los dedos cuelgan algo más)
+CODO_Z_MIN         = 0.12    # m: altura mínima del codo (también lo usa limites_humanos.py)
+
+# 2) CODO SOLO CUANDO SE MIDE BIEN. En el vídeo el codo salía casi siempre reconstruido
+#    ("c:R", CODO ESTIMADO) y su objetivo quedaba a 22-34 cm: tiraba de la postura.
+#    Con el codo dudoso su peso en la IK se multiplica por HIBRIDO_CODO_DUDOSO.
+HIBRIDO_CODO_SOLO_FIABLE = True
+HIBRIDO_CODO_DUDOSO      = 0.0   # 0 = el codo dudoso no cuenta (manda solo la palma)
+
+# 3) BASE ESTABLE CON EL BRAZO VERTICAL (colgando o arriba). Ahí tu dirección horizontal
+#    es ruido (azimut 162° con el brazo colgando) y la base saltaba hasta 100°.
+#    Por debajo de VERTICAL_HORIZ[0] de componente horizontal se usa la dirección actual
+#    del robot; por encima de [1], la tuya; en medio se mezclan.
+VERTICAL_HORIZ = (0.35, 0.60)   # ≈ elevación 20°–37° (por debajo de ~20° el azimut ya es ruido)
+BASE_BLOQUEO_W = 0.3         # con menos de esta confianza en tu horizontal, joint1 no se mueve
+
+# 4) LÍMITES HUMANOS (skill_shield/brazo/limites_humanos.py). Dos niveles:
+#    · sobre TU medida: lo que un brazo no puede hacer (codo > 145°, antebrazo hacia
+#      atrás con rotación imposible del húmero, brazo metido en el torso) se proyecta
+#      al rango anatómico antes de dárselo al robot;
+#    · sobre el ROBOT: joint1 en tu rango de azimut, joint2 sin bajar el codo al suelo,
+#      joint3 sin plegarse más de CODO_FLEX_MAX respecto al codo recto.
+LIMITES_HUMANOS      = True
+HOMBRO_AZ_MIN        = -45.0   # ° cruzando el brazo por delante del pecho
+HOMBRO_AZ_MAX        = 130.0   # ° abriendo hacia atrás con el brazo alto
+HOMBRO_EXT_ELEV      =  55.0   # ° por debajo de esta elevación sí se puede llevar el brazo atrás
+HOMBRO_AZ_LIBRE_ELEV =  20.0   # ° con el brazo casi colgando el azimut no se limita (es ruido)
+CODO_FLEX_MAX        = 145.0   # ° flexión máxima del codo
+HUMERO_ROT_EXT       =  95.0   # ° rotación externa máx. del húmero
+HUMERO_ROT_INT       = 110.0   # ° rotación interna máx. del húmero
+Q2_MIN               = -0.5    # rad: el hombro del robot solo se pasa un poco de la vertical
+# Distancia hombro→palma del robot según TU flexión de codo (ley del coseno con SUS
+# longitudes): brazo recto → robot recto. Sin esto, el objetivo al 95 % del alcance
+# obligaba al robot a doblar el codo ~45° con tu brazo estirado.
+RETARGET_FIEL        = True
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GUANTES MANUS (skill_shield/mano/manus_guante.py · calibrar_manus.py)
+# ═══════════════════════════════════════════════════════════════════════════
+# De dónde salen los DEDOS de la OrcaHand:
+#   "camara" → MediaPipe Hands, como hasta ahora
+#   "manus"  → guante MANUS (ángulos de cada articulación a ~60-120 Hz). La muñeca, el
+#              giro del antebrazo y el brazo siguen saliendo de las cámaras.
+FUENTE_DEDOS = "manus"
+MANUS_MODO   = "integrado"  # "integrado" = sin Dashboard (el que funciona en este PC: CIERRA el
+                            #   Dashboard antes, o el dongle queda ocupado)
+                            # "local" = con un MANUS Core sirviendo en este PC
+                            # "remoto" = MANUS Core en otro PC de la red
+MANUS_LADO   = "derecho"    # mano que se teleopera
+MANUS_SDK_RUTA = os.path.join(_BASE_DIR, "MANUS_Core_3.2.1_SDK_Linux", "Python")  # si no está instalado con pip
+MANUS_CALIBRACION = os.path.join(_BASE_DIR, "manus_calibracion.json")   # lo genera calibrar_manus.py
+MANUS_TIMEOUT_S = 0.3       # s sin datos del guante → los dedos se quedan donde estén
+MANUS_TAU_S     = 0.025     # s: suavizado de los dedos (0 = sin suavizado; más alto = más suave y más lento)
+# Vibración: fuerza de contacto en cada yema de la OrcaHand (simulación) → ese dedo del guante
+MANUS_HAPTICA       = True  # solo actúa si el guante es de un modelo con háptica
+MANUS_HAPTICA_HZ    = 30.0  # envíos/s al guante
+MANUS_FUERZA_MIN    = 0.05  # N: por debajo, sin vibración (roces)
+MANUS_FUERZA_MAX    = 3.0   # N: a partir de aquí, vibración máxima
+MANUS_VIBRACION_MAX = 1.0   # 0..1: intensidad máxima
+# Flexión (MCP y PIP) de índice, corazón, anular y meñique: DIRECTA desde la calibración
+# del propio MANUS (lo que mide el guante es lo que hace el robot). calibrar_manus.py
+# solo ajusta abducciones y pulgar. False = todo desde calibrar_manus.py, como antes.
+MANUS_FLEXION_DIRECTA = True
+# Ganancia por actuador de flexión (1.0 = 1:1). Súbela si ese dedo del robot se queda
+# corto al cerrar (p. ej. el puño no cierra del todo); bájala si se pasa.
+MANUS_GANANCIA_FLEXION = {
+    "menique_mcp": 1.00, "menique_pip": 1.00,
+    "anular_mcp":  1.00, "anular_pip":  1.00,
+    "corazon_mcp": 1.00, "corazon_pip": 1.00,
+    "indice_mcp":  1.00, "indice_pip":  1.00,
 }

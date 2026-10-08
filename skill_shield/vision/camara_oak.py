@@ -2,17 +2,43 @@
 Pipeline DepthAI de la OAK-D (color + estéreo para profundidad real).
 
 (Extraído de Skill_Shield_Nivel_6.py — código sin cambios, solo reubicado.)
+
+7-oct: las salidas XLinkOut ya NO acumulan fotogramas en la cámara (cola de 1, sin
+bloquear). Antes, por defecto, cada salida guardaba hasta 8 fotogramas en la propia
+OAK-D: si el USB no daba abasto (dos cámaras, imagen HD, USB2 o un hub compartido) esa
+cola se llenaba y TODO lo que veía el programa llegaba con 1-2 s de retraso.
 """
 import depthai as dai
 
 from config import *
 
 
+def _salida_sin_retraso(xout):
+    """XLinkOut que, si el USB va justo, TIRA fotogramas viejos en vez de encolarlos."""
+    try:
+        xout.input.setBlocking(False)
+        xout.input.setQueueSize(1)
+    except Exception as e:
+        print(f"⚠️  [OAK] No se pudo ajustar la cola de '{xout.getStreamName()}': {e}")
+
+
+def latencia_s(paquete) -> float:
+    """Segundos desde que el sensor capturó el fotograma hasta AHORA (en el PC).
+    getTimestamp() va en el reloj del PC (DepthAI lo sincroniza), igual que dai.Clock.now()."""
+    try:
+        return (dai.Clock.now() - paquete.getTimestamp()).total_seconds()
+    except Exception:
+        return float("nan")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PIPELINE DEPTHAI  (OAK-D: color + estéreo para profundidad real)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def crear_pipeline_oak(ancho: int = ANCHO_CAM, alto: int = ALTO_CAM) -> dai.Pipeline:
+def crear_pipeline_oak(ancho: int = ANCHO_CAM, alto: int = ALTO_CAM,
+                       con_hd: bool = True) -> dai.Pipeline:
+    """con_hd=False: no se crea la salida 'color_hd' (recorte de mano). Lo usa la cámara
+    SECUNDARIA para ahorrar ~2/3 del ancho de banda USB (ver multicamara.py)."""
     pipeline = dai.Pipeline()
 
     cam_rgb = pipeline.create(dai.node.ColorCamera)
@@ -84,16 +110,19 @@ def crear_pipeline_oak(ancho: int = ANCHO_CAM, alto: int = ALTO_CAM) -> dai.Pipe
     xout_c = pipeline.create(dai.node.XLinkOut)
     xout_c.setStreamName("color")
     cam_rgb.preview.link(xout_c.input)
+    _salida_sin_retraso(xout_c)
 
     # Imagen del ISP (1352x1014 con CAM_FOV_COMPLETO): mismo campo de visión que el
     # preview pero 2,1x más píxeles. Solo se usa para recortar la mano (MANO_RECORTE_HD).
-    if MANO_RECORTE and MANO_RECORTE_HD and CAM_FOV_COMPLETO:
+    if con_hd and MANO_RECORTE and MANO_RECORTE_HD and CAM_FOV_COMPLETO:
         xout_hd = pipeline.create(dai.node.XLinkOut)
         xout_hd.setStreamName("color_hd")
         cam_rgb.isp.link(xout_hd.input)
+        _salida_sin_retraso(xout_hd)
 
     xout_d = pipeline.create(dai.node.XLinkOut)
     xout_d.setStreamName("depth")
     stereo.depth.link(xout_d.input)
+    _salida_sin_retraso(xout_d)
 
     return pipeline

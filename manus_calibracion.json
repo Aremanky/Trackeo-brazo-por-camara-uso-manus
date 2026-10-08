@@ -1,0 +1,78 @@
+{
+  "fecha": "2026-10-07 16:43",
+  "mapeo": {
+    "1": {
+      "fuentes": [
+        "PINKY_SPREAD"
+      ],
+      "ganancias": [
+        0.3618551848129065
+      ],
+      "offset": 0.21180736707540798
+    },
+    "4": {
+      "fuentes": [
+        "RING_SPREAD"
+      ],
+      "ganancias": [
+        -1.0
+      ],
+      "offset": 0.0
+    },
+    "7": {
+      "fuentes": [],
+      "ganancias": [],
+      "offset": 0.0
+    },
+    "10": {
+      "fuentes": [
+        "INDEX_SPREAD"
+      ],
+      "ganancias": [
+        0.41827659798950206
+      ],
+      "offset": -0.04030898861369092
+    },
+    "13": {
+      "fuentes": [
+        "THUMB_CMC_STRETCH",
+        "THUMB_CMC_SPREAD"
+      ],
+      "ganancias": [
+        -0.4688193755078188,
+        0.2877892162876512
+      ],
+      "offset": 0.04053916367032995
+    },
+    "14": {
+      "fuentes": [
+        "THUMB_CMC_SPREAD",
+        "THUMB_CMC_STRETCH"
+      ],
+      "ganancias": [
+        1.0261693812703623,
+        1.454128549506811
+      ],
+      "offset": -0.4249378433642406
+    },
+    "15": {
+      "fuentes": [
+        "THUMB_MCP"
+      ],
+      "ganancias": [
+        1.0
+      ],
+      "offset": 0.0
+    },
+    "16": {
+      "fuentes": [
+        "THUMB_IP"
+      ],
+      "ganancias": [
+        0.8070070952349117
+      ],
+      "offset": 0.7870548891902734
+    }
+  },
+  "poses": 10
+}

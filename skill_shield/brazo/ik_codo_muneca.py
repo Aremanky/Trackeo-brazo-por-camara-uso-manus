@@ -11,6 +11,13 @@ from config import *
 
 from skill_shield.brazo.angulos_humano import _lm_hand, _unitario, _wrap
 
+# ── 7-oct: valores por defecto de los parámetros nuevos (por si config.py es antiguo) ──
+for _k, _v in {
+    "REUBICAR_OBJETIVOS": True, "COMPRIMIR_ABAJO": True, "PALMA_Z_MIN": 0.15,
+    "CODO_Z_MIN": 0.12, "VERTICAL_HORIZ": (0.35, 0.60), "BASE_BLOQUEO_W": 0.3,
+}.items():
+    globals().setdefault(_k, _v)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PASO 3 — DIRECCIONES + IK CON CODO Y MUÑECA (ideas del proyecto TRON 2)
@@ -167,8 +174,15 @@ def peso_codo_humano(d_b, d_a):
 def objetivos_codo_muneca(datos, d_b, d_a, hib):
     """Tus direcciones (fuera, arriba, delante) → dónde deben estar el codo y la
     muñeca del ARCTOS: SU hombro + SUS longitudes en TUS direcciones."""
-    codo   = np.array(datos.xanchor[hib["j_hombro"]]) + hib["L_brazo"] * (hib["ejes"] @ d_b)
+    hombro = np.array(datos.xanchor[hib["j_hombro"]])
+    codo   = hombro + hib["L_brazo"] * (hib["ejes"] @ d_b)
     muneca = codo + hib["L_antebrazo"] * (hib["ejes"] @ d_a)
+    if REUBICAR_OBJETIVOS:                                  # 7-oct: puntos 1 y 3
+        v, h_ref, w = reubicar_palma(datos, hib, hombro, muneca - hombro)
+        muneca = hombro + v
+        d_codo, _ = reubicar_direccion(hib["ejes"] @ np.asarray(d_b), hib["L_brazo"],
+                                       float(hombro[2]), CODO_Z_MIN, h_ref, w)
+        codo = hombro + hib["L_brazo"] * d_codo
     muneca[2] = max(muneca[2], ARM_Z_MINIMA)
     return codo, muneca
 
@@ -200,6 +214,97 @@ def codo_compatible(hombro, palma, codo_humano, L1, L2):
     return hombro + a * u + (n / nn) * h
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 7-oct — ESPACIO DE TRABAJO (puntos 1 y 3 de la revisión del vídeo del 7-oct)
+# ══════════════════════════════════════════════════════════════════════════════
+# 1) Tu hombro está a ~1,4 m del suelo; el del ARCTOS, a 0,29 m. Con el brazo por
+#    debajo de la horizontal, el objetivo de la palma caía bajo el suelo y se
+#    RECORTABA a ARM_Z_MINIMA: error de 50-80 cm, IK desesperada, codo plegado y
+#    choques con el suelo. Ahora la mitad inferior se COMPRIME: de la horizontal
+#    hacia arriba la elevación es 1:1; de la horizontal hacia abajo se reparte en el
+#    rango que el robot sí puede alcanzar (palma ≥ PALMA_Z_MIN, codo ≥ CODO_Z_MIN).
+#    Bajar el brazo sigue bajando la mano del robot, de forma continua.
+# 3) Con el brazo casi VERTICAL (colgando o arriba) la dirección horizontal es ruido
+#    y la base daba vueltas. Ahí se usa la dirección horizontal ACTUAL del robot
+#    (transición suave según VERTICAL_HORIZ) y la IK bloquea joint1 (bloqueo_base).
+
+def _horizontal_actual(datos, hib):
+    """Dirección horizontal (unitaria, mundo) hombro→palma del robot AHORA."""
+    bm = hib["b_mano"]
+    p = datos.xpos[bm] + datos.xmat[bm].reshape(3, 3) @ hib.get("off_punta", np.zeros(3))
+    v = np.array(p - datos.xanchor[hib["j_hombro"]], dtype=float)
+    v[2] = 0.0
+    n = float(np.linalg.norm(v))
+    if n < 0.05:                        # el propio robot está casi vertical
+        v = np.array(hib["ejes"][:, 2], dtype=float)     # su "delante"
+        v[2] = 0.0
+        n = float(np.linalg.norm(v))
+    return v / n
+
+
+def reubicar_direccion(u, dist, z_hombro, z_min, h_ref, w_h=None):
+    """
+    u: dirección unitaria (mundo) hombro→punto que está a 'dist' m del hombro.
+    Devuelve (u', w): u' con la dirección horizontal estabilizada y la parte de
+    abajo comprimida para que el punto no baje de z_min; w ∈ [0, 1] = cuánto se fía
+    de TU dirección horizontal (0 = brazo vertical → se usa h_ref, la del robot).
+    """
+    u = np.asarray(u, dtype=float)
+    uh = np.array([u[0], u[1], 0.0])
+    nh = float(np.linalg.norm(uh))
+    w = _suavizado_01(nh, *VERTICAL_HORIZ) if w_h is None else w_h
+    h = uh / nh if nh > 1e-9 else h_ref
+    h = _unitario(w * h + (1.0 - w) * h_ref)
+    if h is None:
+        h = h_ref
+    e = math.acos(float(np.clip(-u[2], -1.0, 1.0)))       # 0 = abajo · π/2 = horizontal · π = arriba
+    if COMPRIMIR_ABAJO and e < math.pi / 2:
+        caida = z_hombro - z_min                           # lo que puede bajar el punto
+        e_min = math.acos(float(np.clip(caida / dist, -1.0, 1.0))) if caida < dist else 0.0
+        e = e_min + e * (math.pi / 2 - e_min) / (math.pi / 2)
+    return math.sin(e) * h + np.array([0.0, 0.0, -math.cos(e)]), w
+
+
+def reubicar_palma(datos, hib, hombro, v):
+    """Vector hombro→palma (mundo) → (vector corregido, h_ref, w). Guarda w en
+    hib["_w_horizontal"] para que el bucle sepa si debe bloquear la base."""
+    d = float(np.linalg.norm(v))
+    h_ref = _horizontal_actual(datos, hib)
+    if d < 1e-6:
+        hib["_w_horizontal"] = 0.0
+        return np.asarray(v, dtype=float), h_ref, 0.0
+    u, w = reubicar_direccion(np.asarray(v) / d, d, float(hombro[2]), PALMA_Z_MIN, h_ref)
+    hib["_w_horizontal"] = w
+    return u * d, h_ref, w
+
+
+def bloqueo_base(hib):
+    """[joint1, joint2, joint3] que la IK NO debe mover: joint1 con el brazo vertical."""
+    return np.array([hib.get("_w_horizontal", 1.0) < BASE_BLOQUEO_W, False, False])
+
+
+def codo_fiable(ang) -> bool:
+    """
+    7-oct (punto 2) — ¿El CODO de esta medida es de fiar? En el vídeo casi siempre
+    salía reconstruido ("c:R", CODO ESTIMADO) y su objetivo quedaba a 22-34 cm del
+    robot: con peso en la IK, tiraba de la postura hacia algo que no habías hecho.
+    Fiable = medido con estéreo ('E' en su fuente) y ni reconstruido ni de MediaPipe.
+    Sin información de fuentes (modo "mediapipe") se considera fiable.
+    """
+    if ang is None:
+        return False
+    if ang.get("codo_estimado"):
+        return False
+    fuentes = ang.get("fuentes")
+    if not fuentes:
+        return True
+    for parte in str(fuentes).split():
+        if parte.startswith("c:"):
+            f = parte[2:].split("!")[0]                 # "E+E!A" → "E+E"
+            return "E" in f and "R" not in f and "M" not in f
+    return True
+
+
 def objetivos_codo_palma(datos, d_b, d_a, hib, longitudes_humano):
     """
     La mano del robot va donde va TU PALMA, teniendo en cuenta que el ARCTOS
@@ -221,16 +326,22 @@ def objetivos_codo_palma(datos, d_b, d_a, hib, longitudes_humano):
     r, r_max = float(np.linalg.norm(v)), HIBRIDO_ALCANCE_MAX * hib["alcance_punta"]
     if r > r_max:
         v *= r_max / r
+    d_codo = hib["ejes"] @ np.asarray(d_b)
+    if REUBICAR_OBJETIVOS:                                  # 7-oct: puntos 1 y 3
+        v, h_ref, w = reubicar_palma(datos, hib, hombro, v)
+        d_codo, _ = reubicar_direccion(d_codo, hib["L_brazo"], float(hombro[2]),
+                                       CODO_Z_MIN, h_ref, w)
     palma = hombro + v
     palma[2] = max(palma[2], ARM_Z_MINIMA)
-    codo = hombro + hib["L_brazo"] * (hib["ejes"] @ np.asarray(d_b))
+    codo = hombro + hib["L_brazo"] * d_codo
     if CODO_COMPATIBLE and "L_antebrazo_punta" in hib:      # PASO 7.4
         codo = codo_compatible(hombro, palma, codo, hib["L_brazo"], hib["L_antebrazo_punta"])
     return codo, palma
 
 
 def resolver_ik_codo_muneca(modelo, datos, obj_c, obj_m, w_codo, hib, q_inicial,
-                            n_iter=None, lam=0.05, paso_max=None, q_ref=None, w_cont=0.0):
+                            n_iter=None, lam=0.05, paso_max=None, q_ref=None, w_cont=0.0,
+                            bloqueados=None):
     """
     IK de joint1..3 que persigue A LA VEZ el codo (con peso w_codo) y la muñeca
     del ARCTOS, por mínimos cuadrados amortiguados. Como el ARCTOS no puede
@@ -244,6 +355,8 @@ def resolver_ik_codo_muneca(modelo, datos, obj_c, obj_m, w_codo, hib, q_inicial,
     (la solución anterior): cerca de una singularidad no gira la base media vuelta
     para ganar 1 cm. Donde el brazo está bien condicionado apenas influye y, con el
     objetivo quieto, converge igual al punto exacto (no deja error permanente).
+    7-oct — 'bloqueados' (3 bool): joints que la IK no mueve (p.ej. joint1 con el
+    brazo vertical, ver bloqueo_base). None = todos libres, como antes.
     Devuelve (q, error_codo_m, error_muneca_m) — errores geométricos, sin la penalización.
     """
     n_iter   = HIBRIDO_IK_ITER if n_iter is None else n_iter
@@ -290,7 +403,10 @@ def resolver_ik_codo_muneca(modelo, datos, obj_c, obj_m, w_codo, hib, q_inicial,
             J = np.vstack([J, w_cont * np.eye(3)])
             e = np.concatenate([e, w_cont * (q_ref - q)])
 
-        libres = np.ones(3, dtype=bool)
+        libres = np.ones(3, dtype=bool) if bloqueados is None \
+            else ~np.asarray(bloqueados, dtype=bool)
+        if not libres.any():
+            break
         for _ in range(3):                                   # bloqueo de límites
             Jl = J * libres
             dq = Jl.T @ np.linalg.solve(Jl @ Jl.T + lam ** 2 * np.eye(n_filas), e)
