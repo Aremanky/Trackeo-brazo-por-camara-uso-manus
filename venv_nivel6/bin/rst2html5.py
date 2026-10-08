@@ -1,4 +1,4 @@
-#!/home/elecnor/Documentos/Manus-brazo/venv_nivel6/bin/python3.12
+#!/home/elecnor/Documentos/Trackeo-brazo-por-camara-uso-manus/venv_nivel6/bin/python3.12
 # :Copyright: © 2015 Günter Milde.
 # :License: Released under the terms of the `2-Clause BSD license`_, in short:
 #

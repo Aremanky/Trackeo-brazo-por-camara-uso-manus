@@ -28,6 +28,109 @@ _BODY_YEMA = {
 }
 _BODY_PULGAR_YEMA = "right_T-DP_b7429e50"
 
+# ── Poses de contacto de cada pinza (ctrl de la mano, rad, convención del sim) ──
+# A NIVEL DE MÓDULO (8-oct). Antes estaba DENTRO de retarget_a_ctrl(): manus_guante.py
+# hace `from skill_shield.mano.retargeting import PINZA_CTRL_CONTACTO`, el import fallaba
+# en silencio (try/except) y las 7 pinzas calibradas con el guante NUNCA se activaban.
+#
+# Valores calibrados manualmente en el visor MuJoCo para cada pinza:
+#   Se leen directamente del panel "Control" con la pose de contacto activa.
+#   Para calibrar una nueva pinza: alcanza la pose en el visor → copia los
+#   valores del panel aquí → reinicia el script.
+#
+# Mapeo ctrl[] → joint del panel:
+#   ctrl[1]=p-abd  ctrl[2]=p-mcp  ctrl[3]=p-pip   (meñique)
+#   ctrl[4]=r-abd  ctrl[5]=r-mcp  ctrl[6]=r-pip   (anular)
+#   ctrl[7]=m-abd  ctrl[8]=m-mcp  ctrl[9]=m-pip   (corazón)
+#   ctrl[10]=i-abd ctrl[11]=i-mcp ctrl[12]=i-pip  (índice)
+#   ctrl[13]=t-cmc ctrl[14]=t-abd ctrl[15]=t-mcp ctrl[16]=t-pip (pulgar)
+PINZA_CTRL_CONTACTO = {
+    # ── Pulgar ↔ Índice ───────────────────────────────────────────────────
+    "indice": {
+        10: 0.000,   # índice ABD
+        11: 0.491,   # índice MCP
+        12: 1.250,   # índice PIP
+        13: 0.000,   # pulgar CMC
+        14: 0.469,   # pulgar ABD
+        15: 0.469,   # pulgar MCP
+        16: 0.888,   # pulgar IP
+    },
+
+    # ── Pulgar ↔ Corazón ──────────────────────────────────────────────────
+    "corazon": {
+        8:  0.916,   # corazón MCP
+        9:  1.540,   # corazón PIP
+        13: 0.426,   # pulgar CMC
+        14: 0.113,   # pulgar ABD
+        15: 0.174,   # pulgar MCP
+        16: 1.720,   # pulgar IP
+    },
+
+    # ── Pulgar ↔ Anular ───────────────────────────────────────────────────
+    "anular": {
+        4: -0.0565,  # anular ABD
+        5:  1.230,   # anular MCP
+        6:  0.675,   # anular PIP
+        13: 0.000,   # pulgar CMC
+        14: -0.282,  # pulgar ABD
+        15: 0.905,   # pulgar MCP
+        16: 0.526,   # pulgar IP
+    },
+
+    # ── Pulgar ↔ Meñique ──────────────────────────────────────────────────
+    "menique": {
+        1:  0.0995,  # meñique ABD
+        2:  1.130,   # meñique MCP
+        3:  0.366,   # meñique PIP
+        13: 0.576,   # pulgar CMC
+        14: -0.301,  # pulgar ABD
+        15: 0.207,   # pulgar MCP
+        16: 0.888,   # pulgar IP
+    },
+
+    # ── Pulgar ↔ Corazón + Anular (perro / sombra) ────────────────────────
+    "corazon_anular": {
+        4:  0.066,   # anular ABD
+        5:  1.040,   # anular MCP
+        6:  0.867,   # anular PIP
+        7:  0.000,   # corazón ABD (fijo)
+        8:  1.130,   # corazón MCP
+        9:  0.888,   # corazón PIP
+        13: 0.406,   # pulgar CMC
+        14: 0.0171,  # pulgar ABD
+        15: 0.229,   # pulgar MCP
+        16: 0.217,   # pulgar IP
+    },
+
+    # ── Pulgar ↔ Índice + Corazón ─────────────────────────────────────────
+    "indice_corazon": {
+        7:  0.0565,  # corazón ABD
+        8:  0.916,   # corazón MCP
+        9:  0.835,   # corazón PIP
+        10: -0.0571, # índice ABD
+        11: 0.840,   # índice MCP
+        12: 0.643,   # índice PIP
+        13: 0.419,   # pulgar CMC
+        14: 0.291,   # pulgar ABD
+        15: 0.000,   # pulgar MCP
+        16: 0.526,   # pulgar IP
+    },
+
+    # ── Pulgar ↔ Anular + Meñique ─────────────────────────────────────────
+    "anular_menique": {
+        1:  0.194,   # meñique ABD
+        2:  0.982,   # meñique MCP
+        3:  0.739,   # meñique PIP
+        4: -0.0377,  # anular ABD
+        5:  0.916,   # anular MCP
+        6:  0.984,   # anular PIP
+        13: 0.236,   # pulgar CMC
+        14: -0.212,  # pulgar ABD
+        15: 0.982,   # pulgar MCP
+        16: 0.292,   # pulgar IP
+    },
+}
+
 def hay_contacto_yema(modelo: mujoco.MjModel, datos: mujoco.MjData,
                       dedo: str) -> bool:
     """True si la falange distal del pulgar toca la del dedo indicado."""
@@ -66,7 +169,7 @@ def retarget_a_ctrl(modelo: mujoco.MjModel, datos: mujoco.MjData,
     ctrl_mano = datos.ctrl[OFFSET_MANO: OFFSET_MANO + N_ACT]
 
     # — 1. Aberturas (Con umbrales calibrados y Convergencia Activa) —
-    
+
     # 1.1 Vectores largos (MCP -> DIP)
     ang_indice  = calcular_abertura(lm3d[9],  lm3d[11], lm3d[5],  lm3d[7])
     ang_anular  = calcular_abertura(lm3d[9],  lm3d[11], lm3d[13], lm3d[15])
@@ -78,9 +181,9 @@ def retarget_a_ctrl(modelo: mujoco.MjModel, datos: mujoco.MjData,
     dist_pip_anular_menique = calcular_distancia(lm3d[14], lm3d[18])
 
     # 1.3 Zonas Muertas INDIVIDUALES (en metros)
-    UMBRAL_INDICE_CORAZON = 0.028  
-    UMBRAL_CORAZON_ANULAR = 0.022  
-    UMBRAL_ANULAR_MENIQUE = 0.020  
+    UMBRAL_INDICE_CORAZON = 0.028
+    UMBRAL_CORAZON_ANULAR = 0.022
+    UMBRAL_ANULAR_MENIQUE = 0.020
 
     # 1.4 Ángulos de Convergencia (Radianes)
     # Valores que fuerzan a los dedos a inclinarse hacia el corazón (dedo ancla).
@@ -216,15 +319,15 @@ def retarget_a_ctrl(modelo: mujoco.MjModel, datos: mujoco.MjData,
     if estado["vec_neutro"] is not None:
         flexion_raw = calcular_flexion_muneca(
             hand_world_lm, estado["vec_neutro"], estado["eje_lateral"])
-        
+
         ZONA_MUERTA = 0.25  # Aumentado para absorber el ruido Z de MediaPipe
         GANANCIA    = 1.40  # Reducido (antes 2.2) para evitar amplificar temblores
-        
+
         if abs(flexion_raw) < ZONA_MUERTA:
             calc_muneca = 0.0
         else:
             calc_muneca = np.sign(flexion_raw) * (abs(flexion_raw) - ZONA_MUERTA) * GANANCIA
-            
+
         calc_muneca = np.clip(calc_muneca, -1.134, 0.610)
 
     if modo_pinza:
@@ -314,22 +417,22 @@ def retarget_a_ctrl(modelo: mujoco.MjModel, datos: mujoco.MjData,
 
     if ancho_palma > 1e-6:
         dir_palma = v_palma / ancho_palma
-        
+
         # 2. Vector desde el índice hasta donde está el pulgar actualmente
         v_pulgar = th_tip - ix_mcp
-        
+
         # 3. Proyectamos el pulgar sobre el carril de la palma.
         # ratio_cruce = 0.0 -> pulgar en reposo (alineado con el índice)
         # ratio_cruce = 1.0 -> pulgar tocando la base del meñique
         ratio_cruce = np.dot(v_pulgar, dir_palma) / ancho_palma
-        
+
         # 4. Mapeo Directo a los motores (Basado en los valores de tu captura)
-        
+
         # CMC (Oposición): En reposo = -0.1. Cruzado = 0.576.
         # Usamos un multiplicador agresivo (1.3) para garantizar que alcance el 0.576
         calc_cmc = (ratio_cruce * 1.3) - 0.10
         ctrl_raw[13] = float(np.clip(calc_cmc, LIMITES_CTRL[13][0], LIMITES_CTRL[13][1]))
-        
+
         # ABD (Abducción): En reposo = ~0.65. Cruzado = -0.314.
         # Relación inversa: Cuanto más cruzas, más negativo se vuelve para aplastarse contra la palma
         calc_abd = 0.65 - (ratio_cruce * 1.3)
@@ -385,103 +488,8 @@ def retarget_a_ctrl(modelo: mujoco.MjModel, datos: mujoco.MjData,
     # lleguen a MuJoCo exactamente como se calibraron en el visor, sin dilución
     # por el filtro de media móvil.
     #
-    # Valores calibrados manualmente en el visor MuJoCo para cada pinza:
-    #   Se leen directamente del panel "Control" con la pose de contacto activa.
-    #   Para calibrar una nueva pinza: alcanza la pose en el visor → copia los
-    #   valores del panel aquí → reinicia el script.
-    #
-    # Mapeo ctrl[] → joint del panel:
-    #   ctrl[1]=p-abd  ctrl[2]=p-mcp  ctrl[3]=p-pip   (meñique)
-    #   ctrl[4]=r-abd  ctrl[5]=r-mcp  ctrl[6]=r-pip   (anular)
-    #   ctrl[7]=m-abd  ctrl[8]=m-mcp  ctrl[9]=m-pip   (corazón)
-    #   ctrl[10]=i-abd ctrl[11]=i-mcp ctrl[12]=i-pip  (índice)
-    #   ctrl[13]=t-cmc ctrl[14]=t-abd ctrl[15]=t-mcp ctrl[16]=t-pip (pulgar)
-    PINZA_CTRL_CONTACTO = {
-        # ── Pulgar ↔ Índice ───────────────────────────────────────────────────
-        "indice": {
-            10: 0.000,   # índice ABD
-            11: 0.491,   # índice MCP
-            12: 1.250,   # índice PIP
-            13: 0.000,   # pulgar CMC
-            14: 0.469,   # pulgar ABD
-            15: 0.469,   # pulgar MCP
-            16: 0.888,   # pulgar IP
-        },
-
-        # ── Pulgar ↔ Corazón ──────────────────────────────────────────────────
-        "corazon": {
-            8:  0.916,   # corazón MCP
-            9:  1.540,   # corazón PIP
-            13: 0.426,   # pulgar CMC
-            14: 0.113,   # pulgar ABD
-            15: 0.174,   # pulgar MCP
-            16: 1.720,   # pulgar IP
-        },
-
-        # ── Pulgar ↔ Anular ───────────────────────────────────────────────────
-        "anular": {
-            4: -0.0565,  # anular ABD
-            5:  1.230,   # anular MCP
-            6:  0.675,   # anular PIP
-            13: 0.000,   # pulgar CMC
-            14: -0.282,  # pulgar ABD 
-            15: 0.905,   # pulgar MCP
-            16: 0.526,   # pulgar IP
-        },
-
-        # ── Pulgar ↔ Meñique ──────────────────────────────────────────────────
-        "menique": {
-            1:  0.0995,  # meñique ABD
-            2:  1.130,   # meñique MCP
-            3:  0.366,   # meñique PIP
-            13: 0.576,   # pulgar CMC
-            14: -0.301,  # pulgar ABD
-            15: 0.207,   # pulgar MCP
-            16: 0.888,   # pulgar IP
-        },
-
-        # ── Pulgar ↔ Corazón + Anular (perro / sombra) ────────────────────────
-        "corazon_anular": {
-            4:  0.066,   # anular ABD
-            5:  1.040,   # anular MCP
-            6:  0.867,   # anular PIP
-            7:  0.000,   # corazón ABD (fijo)
-            8:  1.130,   # corazón MCP
-            9:  0.888,   # corazón PIP
-            13: 0.406,   # pulgar CMC
-            14: 0.0171,  # pulgar ABD
-            15: 0.229,   # pulgar MCP
-            16: 0.217,   # pulgar IP
-        },
-
-        # ── Pulgar ↔ Índice + Corazón ─────────────────────────────────────────
-        "indice_corazon": {
-            7:  0.0565,  # corazón ABD
-            8:  0.916,   # corazón MCP
-            9:  0.835,   # corazón PIP
-            10: -0.0571, # índice ABD
-            11: 0.840,   # índice MCP
-            12: 0.643,   # índice PIP
-            13: 0.419,   # pulgar CMC
-            14: 0.291,   # pulgar ABD
-            15: 0.000,   # pulgar MCP
-            16: 0.526,   # pulgar IP
-        },
-
-        # ── Pulgar ↔ Anular + Meñique ─────────────────────────────────────────
-        "anular_menique": {
-            1:  0.194,   # meñique ABD
-            2:  0.982,   # meñique MCP
-            3:  0.739,   # meñique PIP
-            4: -0.0377,  # anular ABD
-            5:  0.916,   # anular MCP
-            6:  0.984,   # anular PIP
-            13: 0.236,   # pulgar CMC
-            14: -0.212,  # pulgar ABD
-            15: 0.982,   # pulgar MCP
-            16: 0.292,   # pulgar IP
-        },
-    }
+    # Poses de contacto de cada pinza: PINZA_CTRL_CONTACTO, a nivel de módulo (arriba),
+    # para que manus_guante.py también pueda importarlas.
 
     if modo_pinza:
         for idx, val in PINZA_CTRL_CONTACTO[dedo_activo].items():

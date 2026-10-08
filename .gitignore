@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+MANUS_Core_3.2.1_SDK_Linux/
+
 # Distribution / packaging
 .Python
 build/

@@ -1,4 +1,4 @@
-#!/home/elecnor/Documentos/Manus-brazo/venv_nivel6/bin/python3.12
+#!/home/elecnor/Documentos/Trackeo-brazo-por-camara-uso-manus/venv_nivel6/bin/python3.12
 # -*- coding: utf-8 -*-
 import re
 import sys

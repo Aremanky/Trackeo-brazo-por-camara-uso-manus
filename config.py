@@ -758,37 +758,66 @@ Q2_MIN               = -0.5    # rad: el hombro del robot solo se pasa un poco d
 RETARGET_FIEL        = True
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GUANTES MANUS (skill_shield/mano/manus_guante.py · calibrar_manus.py)
+# GUANTES MANUS (skill_shield/mano/manus_guante.py · calibrar_manus.py)  — v2, 8-oct
 # ═══════════════════════════════════════════════════════════════════════════
-# De dónde salen los DEDOS de la OrcaHand:
-#   "camara" → MediaPipe Hands, como hasta ahora
-#   "manus"  → guante MANUS (ángulos de cada articulación a ~60-120 Hz). La muñeca, el
-#              giro del antebrazo y el brazo siguen saliendo de las cámaras.
-FUENTE_DEDOS = "manus"
-MANUS_MODO   = "integrado"  # "integrado" = sin Dashboard (el que funciona en este PC: CIERRA el
-                            #   Dashboard antes, o el dongle queda ocupado)
-                            # "local" = con un MANUS Core sirviendo en este PC
-                            # "remoto" = MANUS Core en otro PC de la red
+# SUSTITUYE al bloque "GUANTES MANUS" actual de config.py (desde FUENTE_DEDOS hasta el
+# final de MANUS_GANANCIA_FLEXION). Lo que cambia respecto al anterior:
+#   · desaparecen MANUS_FLEXION_DIRECTA y MANUS_GANANCIA_FLEXION (el mapeo ya es por rangos)
+#   · aparecen MANUS_RANGO_ROBOT, MANUS_GANANCIA y los parámetros de pinza
+FUENTE_DEDOS = "manus"      # "camara" → MediaPipe Hands | "manus" → guante (la muñeca y el brazo
+                            #   siguen saliendo de las cámaras)
+MANUS_MODO   = "integrado"  # "integrado" = sin Dashboard (CIERRA el Dashboard antes, o el dongle
+                            #   queda ocupado) | "local" = MANUS Core en este PC | "remoto"
 MANUS_LADO   = "derecho"    # mano que se teleopera
-MANUS_SDK_RUTA = os.path.join(_BASE_DIR, "MANUS_Core_3.2.1_SDK_Linux", "Python")  # si no está instalado con pip
+MANUS_SDK_RUTA = os.path.join(_BASE_DIR, "MANUS_Core_3.2.1_SDK_Linux", "Python")
 MANUS_CALIBRACION = os.path.join(_BASE_DIR, "manus_calibracion.json")   # lo genera calibrar_manus.py
 MANUS_TIMEOUT_S = 0.3       # s sin datos del guante → los dedos se quedan donde estén
-MANUS_TAU_S     = 0.025     # s: suavizado de los dedos (0 = sin suavizado; más alto = más suave y más lento)
+MANUS_TAU_S     = 0.025     # s: suavizado de los dedos (0 = sin suavizado)
 # Vibración: fuerza de contacto en cada yema de la OrcaHand (simulación) → ese dedo del guante
-MANUS_HAPTICA       = True  # solo actúa si el guante es de un modelo con háptica
-MANUS_HAPTICA_HZ    = 30.0  # envíos/s al guante
-MANUS_FUERZA_MIN    = 0.05  # N: por debajo, sin vibración (roces)
-MANUS_FUERZA_MAX    = 3.0   # N: a partir de aquí, vibración máxima
-MANUS_VIBRACION_MAX = 1.0   # 0..1: intensidad máxima
-# Flexión (MCP y PIP) de índice, corazón, anular y meñique: DIRECTA desde la calibración
-# del propio MANUS (lo que mide el guante es lo que hace el robot). calibrar_manus.py
-# solo ajusta abducciones y pulgar. False = todo desde calibrar_manus.py, como antes.
-MANUS_FLEXION_DIRECTA = True
-# Ganancia por actuador de flexión (1.0 = 1:1). Súbela si ese dedo del robot se queda
-# corto al cerrar (p. ej. el puño no cierra del todo); bájala si se pasa.
-MANUS_GANANCIA_FLEXION = {
-    "menique_mcp": 1.00, "menique_pip": 1.00,
-    "anular_mcp":  1.00, "anular_pip":  1.00,
-    "corazon_mcp": 1.00, "corazon_pip": 1.00,
-    "indice_mcp":  1.00, "indice_pip":  1.00,
+MANUS_HAPTICA       = True
+MANUS_HAPTICA_HZ    = 30.0
+MANUS_FUERZA_MIN    = 0.05  # N
+MANUS_FUERZA_MAX    = 3.0   # N
+MANUS_VIBRACION_MAX = 1.0
+
+# ── Rangos del ROBOT (rad) en los extremos de TU mano: (cuando estás en tu mínimo, cuando
+# estás en tu máximo). Tus ángulos en esos extremos los mide calibrar_manus.py. Si un dedo
+# va al revés, intercambia los dos valores de su par; si no cierra del todo, sube el máximo;
+# si choca, bájalo. Claves = índice de ctrl de la mano (0..16, como LIMITES_CTRL).
+# Sentidos de la OrcaHand (cinemática del MJCF):
+#   abd de los dedos: + = la yema va HACIA EL PULGAR (índice + = abre; anular/meñique + = cierran)
+#   t-abd (14):  + = pulgar tumbado en el plano de la palma ; − = pulgar perpendicular a la palma
+#   t-cmc (13):  + = pulgar barre hacia la base del meñique (oposición) ; − = hacia fuera
+MANUS_RANGO_ROBOT = {
+    # flexión (mano abierta → puño). Hardware: mcp hasta 100° (1.745 rad), pip hasta 107° (1.867)
+    2:  (0.0, 1.70),  3:  (0.0, 1.80),      # meñique mcp, pip
+    5:  (0.0, 1.70),  6:  (0.0, 1.80),      # anular
+    8:  (0.0, 1.70),  9:  (0.0, 1.80),      # corazón
+    11: (0.0, 1.70),  12: (0.0, 1.80),      # índice
+    # abducción (dedos JUNTOS → SEPARADOS). Los "juntos" son la convergencia de retargeting.py
+    10: (-0.27, 0.45),                      # índice
+    4:  (0.225, -0.25),                     # anular
+    1:  (0.42, -0.25),                      # meñique
+    7:  (0.0, 0.0),                         # corazón: fijo
+    # pulgar
+    14: (0.90, -0.25),     # CMC_SPREAD:  pulgar en el plano de la palma → perpendicular a ella
+    13: (-0.60, 0.576),    # CMC_STRETCH: pulgar extendido hacia fuera → cruzado hacia el meñique
+    15: (0.0, 1.50),       # MCP: recto → doblado
+    16: (0.175, 1.50),     # IP:  recto → doblado
 }
+# Ganancia extra sobre la fracción de recorrido (1.0 = tu extremo = extremo del robot). Con 1.15
+# llegas al extremo del robot con el 87 % de tu recorrido: útil si con el guante no aprietas el
+# puño del todo o quieres pinzas más "decididas". Claves: nombres de actuador.
+MANUS_GANANCIA = {
+    "menique_mcp": 1.00, "menique_pip": 1.00, "anular_mcp": 1.00, "anular_pip": 1.00,
+    "corazon_mcp": 1.00, "corazon_pip": 1.00, "indice_mcp": 1.00, "indice_pip": 1.00,
+    "indice_abd": 1.00, "anular_abd": 1.00, "menique_abd": 1.00,
+    "pulgar_cmc": 1.00, "pulgar_abd": 1.00, "pulgar_mcp": 1.00, "pulgar_ip": 1.00,
+}
+# ── Pinzas con el guante ──
+# Cuando tu mano se parece (RMS en grados sobre pulgar + dedo) a una de las 7 pinzas grabadas en
+# calibrar_manus.py, el comando se mezcla con la pose de contacto del robot (PINZA_CTRL_CONTACTO,
+# retargeting.py): 0 % por encima de OFF, 100 % por debajo de ON, continuo entre medias.
+MANUS_PINZA_ACTIVA  = True
+MANUS_PINZA_ON_DEG  = 7.0    # súbelo si la pinza "parpadea"; bájalo si entra en pinza sin querer
+MANUS_PINZA_OFF_DEG = 14.0

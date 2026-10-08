@@ -32,6 +32,7 @@
 ├── arrancar_nivel6.sh
 ├── calibrador_hsv.py
 ├── calibrar_extrinseca.py
+├── calibrar_manus.py
 ├── camaras_extrinsecas.json
 ├── comprobar_profundidad.py
 ├── config.py
@@ -75,6 +76,7 @@
 │   └── tornillo
 │       └── episodio_0001.csv
 ├── hand_landmark_lite_sh4.blob
+├── manus_calibracion.json
 ├── MANUS_Core_3.2.1_SDK_Linux
 │   ├── C++
 │   │   ├── SDKClient
@@ -809,7 +811,10 @@
 │   │   │   ├── generated
 │   │   │   │   ├── _cdef_generated.h
 │   │   │   │   ├── _enums.py
-│   │   │   │   └── __init__.py
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── __pycache__
+│   │   │   │       ├── _enums.cpython-312.pyc
+│   │   │   │       └── __init__.cpython-312.pyc
 │   │   │   ├── __init__.py
 │   │   │   ├── linux
 │   │   │   │   ├── aarch64
@@ -829,7 +834,10 @@
 │   │   │   │       ├── _manus_sdk.cpython-314-x86_64-linux-gnu.so
 │   │   │   │       └── _manus_sdk.cpython-39-x86_64-linux-gnu.so
 │   │   │   ├── _manus_sdk.cp312-win_amd64.pyd
-│   │   │   └── manus_wrapper.py
+│   │   │   ├── manus_wrapper.py
+│   │   │   └── __pycache__
+│   │   │       ├── __init__.cpython-312.pyc
+│   │   │       └── manus_wrapper.cpython-312.pyc
 │   │   ├── manus_sdk.egg-info
 │   │   │   ├── dependency_links.txt
 │   │   │   ├── PKG-INFO
@@ -1006,6 +1014,8 @@
 │   │   ├── main_demo.py
 │   │   ├── neutral.py
 │   │   ├── overload_demo.py
+│   │   ├── __pycache__
+│   │   │   └── common.cpython-312.pyc
 │   │   ├── record_angles.py
 │   │   ├── record_continuous.py
 │   │   ├── replay_angles.py
@@ -2158,9 +2168,11 @@
 │   ├── mano
 │   │   ├── biomecanica.py
 │   │   ├── __init__.py
+│   │   ├── manus_guante.py
 │   │   ├── __pycache__
 │   │   │   ├── biomecanica.cpython-312.pyc
 │   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── manus_guante.cpython-312.pyc
 │   │   │   └── retargeting.cpython-312.pyc
 │   │   └── retargeting.py
 │   ├── __pycache__
@@ -2214,4 +2226,4 @@
 ├── test_ia_mano.py
 └── tree.txt
 
-222 directories, 1993 files
+225 directories, 2002 files

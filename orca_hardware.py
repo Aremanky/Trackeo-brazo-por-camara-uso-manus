@@ -11,9 +11,52 @@ Skill_Shield construye hardware_target[] en ORDEN DE MOTOR (índice = motor_id -
   [11]=Motor12=pinky_mcp  [12]=Motor13=pinky_abd  [13]=Motor14=thumb_abd
   [14]=Motor15=thumb_mcp  [15]=Motor16=thumb_dip  [16]=Motor17=thumb_cmc
 
-Todos los valores llegan en RADIANES. OrcaHand espera GRADOS → conversión aquí.
-Las inversiones de motor (signos negativos en joint_to_motor_map) las gestiona
-internamente el SDK de OrcaHand — NO aplicar correcciones de signo manual.
+Todos los valores llegan en RADIANES y en la CONVENCIÓN DEL SIMULADOR (MJCF).
+OrcaHand espera GRADOS en SU convención → la traducción se hace aquí (ver abajo).
+Las inversiones de MOTOR (signos negativos en joint_to_motor_map) las sigue gestionando
+el SDK; lo que se corrige aquí es otra cosa: el SENTIDO DEL ÁNGULO de cada articulación.
+
+TRADUCCIÓN SIM → MANO REAL (8-oct)
+----------------------------------
+La simulación iba bien pero la mano física no cerraba el puño, no hacía pinzas y no
+cerraba el pulgar. Causas en este puente (las dos primeras eran invisibles en el sim):
+
+  1) ABDUCCIONES INVERTIDAS (index/middle/ring/pinky_abd). En el MJCF, ángulo + mueve la
+     yema HACIA EL PULGAR; en orca_core, + la mueve HACIA EL MEÑIQUE. Pruebas: el ROM de
+     index_abd del config.yaml es [-30, 25], espejo del rango del MJCF [-25, 30]; la
+     postura neutral del SDK (índice −14°, anular +10°, meñique +22°) solo es un abanico
+     natural con + = hacia el meñique; y el propio orca_core actual lo declara
+     (kinematics/v2_kinematics.yaml: sign −1 en las cuatro abducciones). Se mandaba el
+     ángulo del sim tal cual → con tus dedos JUNTOS (puño, pinza) la mano real los ABRÍA
+     en abanico y el índice se iba hacia el pulgar, cerrándole el paso.
+     → ORCA_HW_SIGNOS (por defecto, −1 en las cuatro abducciones).
+
+  2) EL CIERRE DEL SIM NO LLEGABA AL TOPE REAL. El puño del guante es mcp 1.70 rad (97°),
+     pip 1.80 (103°), pulgar mcp/ip 1.50 (86°): 97 % del recorrido calibrado en los dedos,
+     89 % en el nudillo del pulgar y 83 % en su punta. Además el SDK graba cada tope con
+     el par QUITADO (el tendón se relaja), así que hasta el 100 % se queda algo corto.
+     → ORCA_HW_CIERRE_COMPLETO: el último tramo del recorrido de cada FLEXIÓN se estira
+       para que el "cerrado" del sim sea el tope calibrado de la mano real; por debajo
+       de ORCA_HW_CIERRE_RODILLA (60 % del cierre) no cambia nada.
+     → ORCA_HW_SOBRECARRERA_DEG: unos grados más allá del tope, SOLO en flexiones. Los
+       dedos van en current_based_position: empujan como mucho con max_current (igual que
+       al calibrar). Nunca en la muñeca (modo multivuelta, sin límite de corriente).
+
+  3) SEGUIMIENTO: cada ORCA_HW_SEGUIMIENTO_CADA_S se lee la mano (posición + corriente)
+     y se avisa de las articulaciones que no llegan a lo pedido, diciendo si es por
+     corriente (sube max_current en el config.yaml del SDK) o sin esfuerzo (tendón flojo
+     o calibración desfasada → tension.py + calibrate.py del SDK).
+
+  Parámetros opcionales (config.py); si no están, se usan estos valores:
+      ORCA_HW_SIGNOS            = {"index_abd": -1, "middle_abd": -1,
+                                   "ring_abd": -1, "pinky_abd": -1}   # {} = como antes
+      ORCA_HW_CIERRE_COMPLETO   = True
+      ORCA_HW_CIERRE_RODILLA    = 0.6     # fracción del cierre donde empieza el estirado
+      ORCA_HW_CIERRE_SIM        = {}      # p. ej. {"thumb_dip": 1.50}: "cerrado" del sim (rad)
+      ORCA_HW_SOBRECARRERA_DEG  = 4.0     # 0 = sin sobrecarrera (se usa la API pública)
+      ORCA_HW_SEGUIMIENTO       = True
+      ORCA_HW_SEGUIMIENTO_CADA_S     = 3.0
+      ORCA_HW_SEGUIMIENTO_UMBRAL_DEG = 6.0
 
 MANO FÍSICA SIN TROMPICONES (30-sep) — hilo de envío propio
 ------------------------------------------------------------
@@ -36,8 +79,8 @@ Ahora:
   3) Mide cuánto tarda el SDK en cada envío y avisa si el puerto serie va lento.
 
 La interfaz NO cambia: conectar(), enviar_posiciones(array), desconectar() y el
-atributo .conectado. Los parámetros se leen de config.py (sección FLUIDEZ); si no
-están, se usan los valores por defecto de _param(...).
+atributo .conectado. Nuevo: estado_real() para leer la mano (lo usa
+diagnostico_mano_real.py).
 """
 
 import math
@@ -69,11 +112,59 @@ def _param(nombre, defecto):
     return getattr(_cfg, nombre, defecto) if _cfg is not None else defecto
 
 
+def _estirar(x, x_rodilla, x_cierre, y_cierre):
+    """Tramo final estirado: x_rodilla → x_rodilla, x_cierre → y_cierre (grados)."""
+    if x <= x_rodilla:
+        return x
+    if x >= x_cierre:
+        return y_cierre + (x - x_cierre)
+    return x_rodilla + (x - x_rodilla) * (y_cierre - x_rodilla) / (x_cierre - x_rodilla)
+
+
+def _encoger(y, x_rodilla, x_cierre, y_cierre):
+    """Inversa de _estirar (para leer la postura real en la convención del sim)."""
+    if y <= x_rodilla:
+        return y
+    if y >= y_cierre:
+        return x_cierre + (y - y_cierre)
+    return x_rodilla + (y - x_rodilla) * (x_cierre - x_rodilla) / (y_cierre - x_rodilla)
+
+
+def analizar_seguimiento(wrapper, estado, umbral_deg, solo=None):
+    """
+    estado = wrapper.estado_real() → líneas de texto con las articulaciones que no
+    llegan a lo pedido (más de umbral_deg) y el motivo probable. [] si todo llega.
+    La sobrecarrera no cuenta como error: por diseño el dedo no puede pasar del tope.
+    """
+    filas = []
+    for j, (pedido, real, frac) in estado.items():
+        if (solo is not None and j not in solo) or pedido is None or real is None:
+            continue
+        lo, hi = wrapper._rom.get(j, (-1e9, 1e9))
+        objetivo = min(max(pedido, lo), hi)
+        err = real - objetivo
+        if abs(err) <= umbral_deg:
+            continue
+        base = f"{j:11s} pide {objetivo:6.1f}°  está en {real:6.1f}°  ({err:+5.1f}°)"
+        if j == "wrist":
+            motivo = "muñeca (modo multivuelta, sin límite de corriente): revisa su calibración"
+        elif frac != frac:          # NaN
+            motivo = "sin lectura de corriente"
+        elif frac >= 0.85:
+            motivo = (f"corriente {100 * frac:3.0f} % de max_current → LIMITADA POR CORRIENTE: "
+                      f"algo la frena (piel, otro dedo, rozamiento) o max_current es bajo")
+        else:
+            motivo = (f"corriente {100 * frac:3.0f} % → no llega SIN apretar: tendón flojo, "
+                      f"calibración desfasada o tope mecánico antes de lo esperado")
+        filas.append(f"{base}  ·  {motivo}")
+    return filas
+
+
 class OrcaHardwareWrapper:
     """
-    Recibe hardware_target[] (motor-indexado, radianes) y lo manda a OrcaHand desde
-    un hilo propio, como comando continuo y suave.
-    El SDK gestiona internamente las inversiones de motor del joint_to_motor_map.
+    Recibe hardware_target[] (motor-indexado, radianes, convención del SIM) y lo manda
+    a OrcaHand desde un hilo propio, como comando continuo y suave, traducido a la
+    convención de orca_core (ver cabecera).
     """
 
     # Índice del array (= motor_id - 1) → nombre de joint OrcaHand
@@ -98,6 +189,24 @@ class OrcaHardwareWrapper:
         16: "thumb_cmc",   # Motor 17 ← mu_pos["thumb_cmc"]
     }
 
+    # Índice de ctrl de la mano (los de config.LIMITES_CTRL) de cada joint
+    JOINT_A_CTRL = {
+        "wrist": 0, "pinky_abd": 1, "pinky_mcp": 2, "pinky_pip": 3,
+        "ring_abd": 4, "ring_mcp": 5, "ring_pip": 6,
+        "middle_abd": 7, "middle_mcp": 8, "middle_pip": 9,
+        "index_abd": 10, "index_mcp": 11, "index_pip": 12,
+        "thumb_cmc": 13, "thumb_abd": 14, "thumb_mcp": 15, "thumb_dip": 16,
+    }
+
+    # Flexiones (cierre de dedos y pulgar): las ÚNICAS con cierre completo y sobrecarrera.
+    # Nunca la muñeca (multi_turn_position, sin límite de corriente), ni las abducciones,
+    # ni thumb_cmc / thumb_abd.
+    FLEXION = ("index_mcp", "index_pip", "middle_mcp", "middle_pip", "ring_mcp",
+               "ring_pip", "pinky_mcp", "pinky_pip", "thumb_mcp", "thumb_dip")
+
+    # Sentido del ángulo sim (MJCF) → orca_core. Ver cabecera, punto 1.
+    SIGNOS_DEFECTO = {"index_abd": -1, "middle_abd": -1, "ring_abd": -1, "pinky_abd": -1}
+
     # Debug de pulgar: True para imprimir valores cada DEBUG_CADA_N envíos
     # (a 50 envíos/s, 30 envíos ≈ 0.6 s)
     DEBUG_PULGAR = False
@@ -113,12 +222,15 @@ class OrcaHardwareWrapper:
     # (a 50 envíos/s, 100 ≈ 2 s: p. ej. cable USB sacado)
     MAX_ERRORES_SEGUIDOS = 100
 
-    def __init__(self, puerto="/dev/ttyUSB0", baudrate=1000000):
+    def __init__(self, puerto="/dev/ttyUSB0", baudrate=1000000, config_path=None,
+                 clase_mano=None):
         self.puerto       = puerto
         self.baudrate     = baudrate
         self.conectado    = False
         self._hand        = None
         self._sdk_abierto = False
+        self._config_path = config_path or _CONFIG_PATH
+        self._clase_mano  = clase_mano        # None = orca_core.OrcaHand (p. ej. MockOrcaHand para ensayar)
 
         self._n      = len(self.MOTOR_A_JOINT)
         self._joints = [self.MOTOR_A_JOINT[i] for i in range(self._n)]
@@ -136,6 +248,25 @@ class OrcaHardwareWrapper:
                 print(f"⚠️  [ORCA HARDWARE] ORCA_HW_LIMITES_JOINT: joint desconocido '{joint}'")
         self.debug_tiempos = bool(_param("ORCA_HW_DEBUG_TIEMPOS", True))
         self.cada_s_debug  = float(_param("ORCA_HW_DEBUG_CADA_S", 5.0))
+
+        # ── Traducción sim → mano real (config.py → ORCA_HW_*; ver cabecera) ──
+        signos = dict(_param("ORCA_HW_SIGNOS", self.SIGNOS_DEFECTO))
+        for joint in signos:
+            if joint not in self._joints:
+                print(f"⚠️  [ORCA HARDWARE] ORCA_HW_SIGNOS: joint desconocido '{joint}'")
+        self._signo = np.array([-1.0 if float(signos.get(j, 1)) < 0 else 1.0
+                                for j in self._joints])
+        self.cierre_completo = bool(_param("ORCA_HW_CIERRE_COMPLETO", True))
+        self.rodilla         = min(max(float(_param("ORCA_HW_CIERRE_RODILLA", 0.6)), 0.0), 0.95)
+        self.sobrecarrera    = max(0.0, float(_param("ORCA_HW_SOBRECARRERA_DEG", 4.0)))
+        self.seguimiento     = bool(_param("ORCA_HW_SEGUIMIENTO", True))
+        self.cada_s_seg      = float(_param("ORCA_HW_SEGUIMIENTO_CADA_S", 3.0))
+        self.umbral_seg      = float(_param("ORCA_HW_SEGUIMIENTO_UMBRAL_DEG", 6.0))
+        self._rom           = {}     # joint → (lo, hi) del config.yaml del SDK (grados)
+        self._rango_sdk     = {}     # joint → (lo, hi) que se puede mandar (con sobrecarrera)
+        self._cierre        = {}     # joint → (x_rodilla, x_cierre, y_cierre) en grados
+        self._motor_directo = False  # True = sobrecarrera activa (sin el recorte del SDK)
+        self._ult_pose      = None   # última pose mandada (grados, convención orca_core)
 
         # Candado del SDK / puerto serie. Solo el hilo de envío habla con los servos;
         # si algún día lees algo del SDK desde otro hilo (p. ej. los sensores
@@ -164,8 +295,11 @@ class OrcaHardwareWrapper:
     def conectar(self):
         print(f"🔌 [ORCA HARDWARE] Conectando en {self.puerto} @ {self.baudrate} bps...")
         try:
-            from orca_core import OrcaHand
-            self._hand = OrcaHand(config_path=_CONFIG_PATH)
+            clase = self._clase_mano
+            if clase is None:
+                from orca_core import OrcaHand
+                clase = OrcaHand
+            self._hand = clase(config_path=self._config_path)
             ok, msg = self._hand.connect()
             if not ok:
                 print(f"❌ [ORCA HARDWARE] Fallo al conectar: {msg}")
@@ -173,6 +307,7 @@ class OrcaHardwareWrapper:
             self._sdk_abierto = True
             print("⚙️  [ORCA HARDWARE] Inicializando articulaciones...")
             self._hand.init_joints()
+            self._preparar_traduccion()
 
             self._reiniciar_generador()
             self._q_leida = self._leer_postura()
@@ -193,43 +328,149 @@ class OrcaHardwareWrapper:
             return False
 
     # ─────────────────────────────────────────────────────────────────────────
+    # TRADUCCIÓN SIM (MJCF, rad) ↔ ORCA_CORE (grados)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _cierre_sim_grados(self, joint):
+        """Valor del sim (grados, ya con el signo aplicado) que significa 'cerrado del todo'."""
+        a_mano = dict(_param("ORCA_HW_CIERRE_SIM", {}))
+        if joint in a_mano:
+            rad = float(a_mano[joint])
+        else:
+            k = self.JOINT_A_CTRL[joint]
+            rango = dict(_param("MANUS_RANGO_ROBOT", {})).get(k)
+            if str(_param("FUENTE_DEDOS", "camara")) == "manus" and rango is not None:
+                rad = max(float(rango[0]), float(rango[1]))     # puño del guante
+            else:
+                lim = _param("LIMITES_CTRL", None)
+                if lim is None:
+                    return None
+                rad = float(lim[k][1])                          # puño de la cámara
+        return float(self._signo[self._joints.index(joint)]) * math.degrees(rad)
+
+    def _preparar_traduccion(self):
+        """ROMs del config.yaml del SDK → rangos y tramos de cierre. Tras init_joints()."""
+        cfg = self._hand.config
+        self._rom = {j: (float(cfg.joint_roms_dict[j][0]), float(cfg.joint_roms_dict[j][1]))
+                     for j in self._joints}
+        # Sobrecarrera = mandar más allá del ROM, que set_joint_positions() recorta: se
+        # usa el mismo cálculo del SDK (_joint_to_motor_pos) sin ese recorte.
+        self._motor_directo = (self.sobrecarrera > 0.0
+                               and callable(getattr(self._hand, "_joint_to_motor_pos", None))
+                               and callable(getattr(self._hand, "_set_motor_pos", None)))
+        extra = self.sobrecarrera if self._motor_directo else 0.0
+        self._rango_sdk, self._cierre = {}, {}
+        for j in self._joints:
+            lo, hi = self._rom[j]
+            if j not in self.FLEXION:
+                self._rango_sdk[j] = (lo, hi)
+                continue
+            self._rango_sdk[j] = (lo, hi + extra)
+            x_c = self._cierre_sim_grados(j) if self.cierre_completo else None
+            y_c = hi + extra
+            if x_c is not None and x_c > 0.0:
+                x_k = self.rodilla * x_c
+                if x_c > x_k + 1.0 and y_c > x_k + 1.0:
+                    self._cierre[j] = (x_k, x_c, y_c)
+
+        invertidas = [j for k, j in enumerate(self._joints) if self._signo[k] < 0]
+        print("🔁 [ORCA HARDWARE] Traducción sim → mano real:")
+        print("   · sentido invertido: " + (", ".join(invertidas) if invertidas else "ninguna")
+              + ("  (sim + = hacia el pulgar; orca_core + = hacia el meñique)" if invertidas else ""))
+        if self._cierre:
+            print("   · cierre completo (sim → real): " + "  ".join(
+                f"{j.replace('_', ' ')} {c[1]:.0f}°→{c[2]:.0f}°" for j, c in self._cierre.items()))
+        print(f"   · sobrecarrera de flexión: {extra:.0f}°"
+              + ("" if self._motor_directo or self.sobrecarrera == 0 else
+                 "  (desactivada: este SDK no expone _joint_to_motor_pos/_set_motor_pos)"))
+        print(f"   · modo {getattr(cfg, 'control_mode', '?')}, max_current = "
+              f"{getattr(cfg, 'max_current', '?')} (config.yaml del SDK)")
+        if invertidas:
+            print("   Comprobación: en la postura neutral del arranque el índice queda abierto "
+                  "hacia el pulgar y el meñique hacia fuera (index_abd −14°, pinky_abd +22°).")
+
+    def _a_sdk(self, q):
+        """q (orden de motor, rad, convención sim) → {joint: grados orca_core}, recortado."""
+        pose = {}
+        for k, j in enumerate(self._joints):
+            g = self._signo[k] * math.degrees(float(q[k]))
+            c = self._cierre.get(j)
+            if c is not None:
+                g = _estirar(g, *c)
+            lo, hi = self._rango_sdk.get(j, (-1e9, 1e9))
+            pose[j] = min(max(g, lo), hi)
+        return pose
+
+    def _desde_sdk(self, grados):
+        """{joint: grados orca_core} → q (orden de motor, rad, convención sim) o None."""
+        q = np.empty(self._n)
+        for k, j in enumerate(self._joints):
+            g = grados.get(j)
+            if g is None:
+                return None
+            c = self._cierre.get(j)
+            if c is not None:
+                g = _encoger(float(g), *c)
+            q[k] = math.radians(self._signo[k] * float(g))
+        return q
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _leer_postura(self):
         """
-        Postura REAL de la mano (rad, orden de motor), para que el primer movimiento
-        salga de donde está la mano y no dé un salto. Prueba los nombres habituales
-        del SDK; si ninguno funciona devuelve None y se parte del primer objetivo
-        (como antes).
+        Postura REAL de la mano (rad, orden de motor, convención del sim), para que el
+        primer movimiento salga de donde está la mano y no dé un salto. Si no se puede
+        leer, devuelve None y se parte del primer objetivo (como antes).
+        (Antes no funcionaba: get_joint_position() devuelve un OrcaJointPositions, no un
+        dict ni una lista, y siempre se caía al "no se pudo leer".)
         """
-        for nombre in ("get_joint_position", "get_joint_positions", "get_joint_pos"):
-            f = getattr(self._hand, nombre, None)
-            if not callable(f):
-                continue
-            try:
-                r = f()
-                if isinstance(r, dict):
-                    grados = [r[j] for j in self._joints]
-                else:
-                    ids = list(getattr(self._hand, "joint_ids", []))
-                    r = list(r)
-                    if not ids or len(ids) != len(r):
-                        continue
-                    d = dict(zip(ids, r))
-                    grados = [d[j] for j in self._joints]
-                if any(g is None for g in grados):
-                    continue
-                q = np.radians(np.asarray(grados, dtype=float))
-                if not np.all(np.isfinite(q)):
-                    continue
-                print(f"📍 [ORCA HARDWARE] Postura inicial leída con {nombre}() "
-                      f"(muñeca {grados[0]:.0f}°, índice MCP {grados[2]:.0f}°): "
-                      f"el primer movimiento saldrá de ahí, sin salto.")
-                return q
-            except Exception:
-                continue
-        print("ℹ️  [ORCA HARDWARE] No se pudo leer la postura inicial: el primer "
-              "objetivo se enviará directamente (como antes).")
-        return None
+        try:
+            with self.lock_sdk:
+                r = self._hand.get_joint_position()
+            grados = r.as_dict() if hasattr(r, "as_dict") else dict(r)
+            q = self._desde_sdk(grados)
+            if q is None or not np.all(np.isfinite(q)):
+                raise ValueError("faltan articulaciones sin calibrar")
+            print(f"📍 [ORCA HARDWARE] Postura inicial leída (muñeca {grados['wrist']:.0f}°, "
+                  f"índice MCP {grados['index_mcp']:.0f}°): el primer movimiento saldrá de "
+                  f"ahí, sin salto.")
+            return q
+        except Exception as e:
+            print(f"ℹ️  [ORCA HARDWARE] No se pudo leer la postura inicial ({e}): el primer "
+                  "objetivo se enviará directamente (como antes).")
+            return None
+
+    def estado_real(self):
+        """
+        Lee la mano: {joint: (pedido°, real°, fracción de max_current)}, en grados de
+        orca_core. 'pedido' es lo último que se mandó (None si aún nada). ~2-4 ms.
+        """
+        if self._hand is None:
+            return {}
+        with self.lock_sdk:
+            pos, _vel, cur = self._hand._motor_client.read_pos_vel_cur()
+            reales = self._hand._motor_to_joint_pos(pos)
+        cfg = self._hand.config
+        lector = getattr(self._hand._motor_client, "_pos_vel_cur_reader", None)
+        escala = float(getattr(lector, "cur_scale", 1.0) or 1.0)   # misma unidad que Goal Current
+        i_max = max(float(cfg.max_current), 1.0)
+        idx = {mid: i for i, mid in enumerate(cfg.motor_ids)}
+        pedida = self._ult_pose or {}
+        out = {}
+        for j in self._joints:
+            mid = cfg.joint_to_motor_map.get(j)
+            frac = abs(float(cur[idx[mid]])) / escala / i_max if mid in idx else float("nan")
+            out[j] = (pedida.get(j), reales.get(j), frac)
+        return out
+
+    def _informe_seguimiento(self):
+        """Avisa de lo que no llega (solo articulaciones cuyo comando ya está quieto)."""
+        quietas = {j for k, j in enumerate(self._joints) if abs(self._v[k]) < 0.3}
+        filas = analizar_seguimiento(self, self.estado_real(), self.umbral_seg, quietas)
+        if filas:
+            print("\n🔎 [ORCA HARDWARE] No llegan a lo pedido:")
+            for f in filas:
+                print("   " + f)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -240,8 +481,8 @@ class OrcaHardwareWrapper:
 
     def enviar_posiciones(self, array_radianes):
         """
-        PUBLICA el objetivo (hardware_target[], orden de motor, radianes) y vuelve
-        enseguida. Quien habla con los servos es el hilo de envío.
+        PUBLICA el objetivo (hardware_target[], orden de motor, radianes, convención del
+        sim) y vuelve enseguida. Quien habla con los servos es el hilo de envío.
         Se puede llamar a cualquier ritmo (en teleoperación, una vez por fotograma).
         """
         if not self.conectado:
@@ -284,12 +525,19 @@ class OrcaHardwareWrapper:
         self._q += self._v * dt
 
     def _enviar_sdk(self):
-        """Manda el comando actual al SDK (grados). Devuelve lo que tardó (s)."""
-        pose = {j: math.degrees(float(self._q[k])) for k, j in enumerate(self._joints)}
+        """Manda el comando actual al SDK (grados, convención orca_core). Devuelve lo que tardó (s)."""
+        pose = self._a_sdk(self._q)
         t0 = time.perf_counter()
         with self.lock_sdk:
-            self._hand.set_joint_positions(pose)      # el SDK clipea a ROMs y gestiona signos
+            if self._motor_directo:
+                # Lo mismo que hace set_joint_positions() del SDK (signos de motor, wraps,
+                # calibración) pero SIN su recorte al ROM, para dejar pasar la sobrecarrera
+                # de las flexiones (ya recortada en _a_sdk a ROM + ORCA_HW_SOBRECARRERA_DEG).
+                self._hand._set_motor_pos(self._hand._joint_to_motor_pos(pose))
+            else:
+                self._hand.set_joint_positions(pose)  # el SDK recorta a los ROMs
         dur = time.perf_counter() - t0
+        self._ult_pose = pose
 
         self._n_env += 1
         if self.DEBUG_PULGAR and self._n_env % self.DEBUG_CADA_N == 0:
@@ -308,6 +556,7 @@ class OrcaHardwareWrapper:
         t_rep, n_rep, sdk_sum, sdk_max = time.perf_counter(), 0, 0.0, 0.0
         aviso_lento = False
         errores, t_ult_error = 0, 0.0
+        t_seg = time.perf_counter()
 
         while self._activo:
             ahora = time.perf_counter()
@@ -340,6 +589,15 @@ class OrcaHardwareWrapper:
                         self.conectado = False
                         self._activo   = False
                         break
+
+            # ── Seguimiento: ¿llega la mano real a lo que se le pide? ──
+            if self.seguimiento and self._ult_pose is not None and ahora - t_seg >= self.cada_s_seg:
+                t_seg = ahora
+                try:
+                    self._informe_seguimiento()
+                except Exception as e:
+                    self.seguimiento = False
+                    print(f"⚠️  [ORCA HARDWARE] Seguimiento desactivado (no se pudo leer la mano: {e})")
 
             # ── Informe periódico: envíos/s reales y lo que tarda el SDK ──
             if ahora - t_rep >= self.cada_s_debug and n_rep > 0:

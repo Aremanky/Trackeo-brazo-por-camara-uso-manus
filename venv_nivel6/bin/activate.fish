@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/elecnor/Documentos/Manus-brazo/venv_nivel6
+set -gx VIRTUAL_ENV /home/elecnor/Documentos/Trackeo-brazo-por-camara-uso-manus/venv_nivel6
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

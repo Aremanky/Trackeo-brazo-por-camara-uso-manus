@@ -1,4 +1,4 @@
-#!/home/elecnor/Documentos/Manus-brazo/venv_nivel6/bin/python3.12
+#!/home/elecnor/Documentos/Trackeo-brazo-por-camara-uso-manus/venv_nivel6/bin/python3.12
 
 # $Id: rst2pseudoxml.py 9115 2022-07-28 17:06:24Z milde $
 # Author: David Goodger <goodger@python.org>
