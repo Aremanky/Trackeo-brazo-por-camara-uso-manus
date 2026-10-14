@@ -793,16 +793,6 @@
 │   │   ├── THIRD-PARTY NOTICES.txt
 │   │   └── UnityPlayer.so
 │   ├── Python
-│   │   ├── build
-│   │   │   ├── bdist.linux-x86_64
-│   │   │   └── lib
-│   │   │       └── manus_sdk
-│   │   │           ├── build_ffi.py
-│   │   │           ├── generated
-│   │   │           │   ├── _enums.py
-│   │   │           │   └── __init__.py
-│   │   │           ├── __init__.py
-│   │   │           └── manus_wrapper.py
 │   │   ├── examples
 │   │   │   ├── minimal_client.py
 │   │   │   └── sdk_client.py
@@ -814,7 +804,9 @@
 │   │   │   │   ├── __init__.py
 │   │   │   │   └── __pycache__
 │   │   │   │       ├── _enums.cpython-312.pyc
-│   │   │   │       └── __init__.cpython-312.pyc
+│   │   │   │       ├── _enums.cpython-313.pyc
+│   │   │   │       ├── __init__.cpython-312.pyc
+│   │   │   │       └── __init__.cpython-313.pyc
 │   │   │   ├── __init__.py
 │   │   │   ├── linux
 │   │   │   │   ├── aarch64
@@ -837,7 +829,9 @@
 │   │   │   ├── manus_wrapper.py
 │   │   │   └── __pycache__
 │   │   │       ├── __init__.cpython-312.pyc
-│   │   │       └── manus_wrapper.cpython-312.pyc
+│   │   │       ├── __init__.cpython-313.pyc
+│   │   │       ├── manus_wrapper.cpython-312.pyc
+│   │   │       └── manus_wrapper.cpython-313.pyc
 │   │   ├── manus_sdk.egg-info
 │   │   │   ├── dependency_links.txt
 │   │   │   ├── PKG-INFO
@@ -907,6 +901,7 @@
 │   ├── prueba1.pth
 │   ├── prueba.pth
 │   └── tornillo.pth
+├── MUJOCO_LOG.TXT
 ├── orca_core-main
 │   ├── CLAUDE.md
 │   ├── demo
@@ -957,11 +952,7 @@
 │   │   │   ├── feetech_client.py
 │   │   │   ├── __init__.py
 │   │   │   ├── mock_dynamixel_client.py
-│   │   │   ├── motor_client.py
-│   │   │   └── __pycache__
-│   │   │       ├── dynamixel_client.cpython-312.pyc
-│   │   │       ├── __init__.cpython-312.pyc
-│   │   │       └── motor_client.cpython-312.pyc
+│   │   │   └── motor_client.py
 │   │   ├── hardware_hand.py
 │   │   ├── __init__.py
 │   │   ├── joint_position.py
@@ -985,20 +976,8 @@
 │   │   │       │   └── config.yaml
 │   │   │       └── orcahand_touch_right
 │   │   │           └── config.yaml
-│   │   ├── __pycache__
-│   │   │   ├── base_hand.cpython-312.pyc
-│   │   │   ├── calibration.cpython-312.pyc
-│   │   │   ├── constants.cpython-312.pyc
-│   │   │   ├── hand_config.cpython-312.pyc
-│   │   │   ├── hardware_hand.cpython-312.pyc
-│   │   │   ├── __init__.cpython-312.pyc
-│   │   │   ├── joint_position.cpython-312.pyc
-│   │   │   └── version.cpython-312.pyc
 │   │   ├── utils
 │   │   │   ├── __init__.py
-│   │   │   ├── __pycache__
-│   │   │   │   ├── __init__.cpython-312.pyc
-│   │   │   │   └── utils.cpython-312.pyc
 │   │   │   └── utils.py
 │   │   └── version.py
 │   ├── pyproject.toml
@@ -1015,7 +994,8 @@
 │   │   ├── neutral.py
 │   │   ├── overload_demo.py
 │   │   ├── __pycache__
-│   │   │   └── common.cpython-312.pyc
+│   │   │   ├── common.cpython-312.pyc
+│   │   │   └── common.cpython-313.pyc
 │   │   ├── record_angles.py
 │   │   ├── record_continuous.py
 │   │   ├── replay_angles.py
@@ -1028,20 +1008,21 @@
 │   │   ├── test_motor_latency.py
 │   │   ├── test_overload.py
 │   │   └── zero.py
-│   └── tests
-│       ├── conftest.py
-│       ├── __init__.py
-│       ├── reference
-│       │   └── calibration_expected.yaml
-│       ├── test_base_hand_contract.py
-│       ├── test_calibration.py
-│       ├── test_calibration_reference.py
-│       ├── test_core.py
-│       ├── test_hardware_hand.py
-│       ├── test_jitter.py
-│       ├── test_model_dispatch.py
-│       ├── test_tension.py
-│       └── test_yaml.py
+│   ├── tests
+│   │   ├── conftest.py
+│   │   ├── __init__.py
+│   │   ├── reference
+│   │   │   └── calibration_expected.yaml
+│   │   ├── test_base_hand_contract.py
+│   │   ├── test_calibration.py
+│   │   ├── test_calibration_reference.py
+│   │   ├── test_core.py
+│   │   ├── test_hardware_hand.py
+│   │   ├── test_jitter.py
+│   │   ├── test_model_dispatch.py
+│   │   ├── test_tension.py
+│   │   └── test_yaml.py
+│   └── uv.lock
 ├── orcahand_description-main
 │   ├── assets
 │   │   ├── mjcf
@@ -2127,71 +2108,34 @@
 │   │   ├── ik_codo_muneca.py
 │   │   ├── ik.py
 │   │   ├── __init__.py
-│   │   ├── limites_humanos.py
-│   │   └── __pycache__
-│   │       ├── angulos_humano.cpython-312.pyc
-│   │       ├── control_suave.cpython-312.pyc
-│   │       ├── hibrido.cpython-312.pyc
-│   │       ├── ik_codo_muneca.cpython-312.pyc
-│   │       ├── ik.cpython-312.pyc
-│   │       ├── __init__.cpython-312.pyc
-│   │       └── limites_humanos.cpython-312.pyc
+│   │   └── limites_humanos.py
 │   ├── comun
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-312.pyc
-│   │   │   └── suavizador.cpython-312.pyc
 │   │   └── suavizador.py
 │   ├── hardware
 │   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-312.pyc
-│   │   │   └── sincronizacion.cpython-312.pyc
 │   │   └── sincronizacion.py
 │   ├── ia
 │   │   ├── act.py
-│   │   ├── __init__.py
-│   │   └── __pycache__
-│   │       ├── act.cpython-312.pyc
-│   │       └── __init__.cpython-312.pyc
+│   │   └── __init__.py
 │   ├── __init__.py
 │   ├── interfaz
 │   │   ├── hud_logo.py
 │   │   ├── __init__.py
 │   │   ├── menu.py
-│   │   ├── perfil.py
-│   │   └── __pycache__
-│   │       ├── hud_logo.cpython-312.pyc
-│   │       ├── __init__.cpython-312.pyc
-│   │       ├── menu.cpython-312.pyc
-│   │       └── perfil.cpython-312.pyc
+│   │   └── perfil.py
 │   ├── mano
 │   │   ├── biomecanica.py
 │   │   ├── __init__.py
 │   │   ├── manus_guante.py
-│   │   ├── __pycache__
-│   │   │   ├── biomecanica.cpython-312.pyc
-│   │   │   ├── __init__.cpython-312.pyc
-│   │   │   ├── manus_guante.cpython-312.pyc
-│   │   │   └── retargeting.cpython-312.pyc
 │   │   └── retargeting.py
-│   ├── __pycache__
-│   │   ├── __init__.cpython-312.pyc
-│   │   └── __init__.cpython-313.pyc
 │   ├── simulacion
 │   │   ├── demo_taladro.py
 │   │   ├── entorno_taladro.py
 │   │   ├── entorno_taller.py
 │   │   ├── hilo_fisica.py
 │   │   ├── __init__.py
-│   │   ├── objetos.py
-│   │   └── __pycache__
-│   │       ├── demo_taladro.cpython-312.pyc
-│   │       ├── entorno_taladro.cpython-312.pyc
-│   │       ├── entorno_taller.cpython-312.pyc
-│   │       ├── hilo_fisica.cpython-312.pyc
-│   │       ├── __init__.cpython-312.pyc
-│   │       └── objetos.cpython-312.pyc
+│   │   └── objetos.py
 │   └── vision
 │       ├── camara_oak.py
 │       ├── detectores.py
@@ -2199,17 +2143,6 @@
 │       ├── __init__.py
 │       ├── multicamara.py
 │       ├── profundidad_3d.py
-│       ├── __pycache__
-│       │   ├── camara_oak.cpython-312.pyc
-│       │   ├── camara_oak.cpython-313.pyc
-│       │   ├── detectores.cpython-312.pyc
-│       │   ├── fusion_brazo.cpython-312.pyc
-│       │   ├── __init__.cpython-312.pyc
-│       │   ├── __init__.cpython-313.pyc
-│       │   ├── multicamara.cpython-312.pyc
-│       │   ├── multicamara.cpython-313.pyc
-│       │   ├── profundidad_3d.cpython-312.pyc
-│       │   └── recorte_mano.cpython-312.pyc
 │       └── recorte_mano.py
 ├── Skill_Shield_Nivel_6.py
 ├── tablero_charuco.png
@@ -2226,4 +2159,4 @@
 ├── test_ia_mano.py
 └── tree.txt
 
-225 directories, 2002 files
+208 directories, 1952 files

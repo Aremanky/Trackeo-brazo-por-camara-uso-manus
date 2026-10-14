@@ -821,3 +821,101 @@ MANUS_GANANCIA = {
 MANUS_PINZA_ACTIVA  = True
 MANUS_PINZA_ON_DEG  = 7.0    # súbelo si la pinza "parpadea"; bájalo si entra en pinza sin querer
 MANUS_PINZA_OFF_DEG = 14.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RECORRIDO COMPLETO DE LA MANO (8-oct, 2ª ronda) — pega este bloque AL FINAL de config.py
+# ═══════════════════════════════════════════════════════════════════════════
+# Al ir al final MANDA sobre los LIMITES_CTRL y MANUS_RANGO_ROBOT de más arriba (no hace
+# falta borrarlos). Qué arregla:
+#   · los 4 dedos no tocaban la palma ni se estiraban del todo (sim y mano real)
+#   · el pulgar no se alejaba de la palma ni se apoyaba en ella
+#   · el corazón no se movía hacia los lados (estaba fijo a 0 en tres sitios)
+#   · las abducciones de la mano real iban al revés (cambio mío de la 1ª ronda)
+# Después: python calibrar_manus.py  (hay 2 poses nuevas del corazón).
+
+# 1) Límites de seguridad de la mano = rango COMPLETO del modelo (ctrlrange del MJCF), que es
+#    también el ROM del SDK de la mano real. Antes: flexiones desde 0 (en el MJCF, con 0° los
+#    dedos quedan 3-8° doblados: no podían estirarse), abducciones −0.20…0.50 y corazón fijo.
+LIMITES_CTRL = [
+    (-1.134,  0.610),    #  0: muñeca (sin cambios)
+    (-0.5236, 0.5236),   #  1: meñique abd
+    (-0.4363, 1.7453),   #  2: meñique mcp
+    (-0.2618, 1.8675),   #  3: meñique pip
+    (-0.4712, 0.4712),   #  4: anular abd
+    (-0.4363, 1.7453),   #  5: anular mcp
+    (-0.2618, 1.8675),   #  6: anular pip
+    (-0.4712, 0.4712),   #  7: corazón abd   ← antes (0, 0): fijo
+    (-0.4363, 1.7453),   #  8: corazón mcp
+    (-0.2618, 1.8675),   #  9: corazón pip
+    (-0.4363, 0.5236),   # 10: índice abd
+    (-0.4363, 1.7453),   # 11: índice mcp
+    (-0.2618, 1.8675),   # 12: índice pip
+    (-0.7854, 0.5760),   # 13: pulgar cmc (oposición)
+    (-0.3142, 0.9599),   # 14: pulgar abd
+    (-0.4363, 1.7453),   # 15: pulgar mcp
+    (-0.2618, 1.8675),   # 16: pulgar ip
+]
+
+# 2) Guante → robot: (robot en TU mínimo, robot en TU máximo), rad. Extremos = los del modelo,
+#    medidos con su cinemática y sus mallas.
+MANUS_RANGO_ROBOT = {
+    # flexión: dedo RECTO de verdad → puño con la yema TOCANDO la palma
+    2:  (-0.14, 1.70),  3:  (0.0, 1.80),    # meñique mcp, pip
+    5:  (-0.05, 1.70),  6:  (0.0, 1.80),    # anular
+    8:  (-0.05, 1.70),  9:  (0.0, 1.80),    # corazón
+    11: (-0.07, 1.70),  12: (0.0, 1.80),    # índice
+    # abducción: dedos JUNTOS → SEPARADOS (abanico completo del modelo)
+    10: (-0.27, 0.52),                      # índice
+    4:  (0.225, -0.45),                     # anular
+    1:  (0.42, -0.50),                      # meñique
+    7:  (-0.40, 0.40),                      # corazón: hacia el anular → hacia el índice
+    # pulgar: rango completo
+    14: (0.96, -0.31),     # t-abd: tumbado en el plano de la palma → perpendicular a ella
+    13: (-0.785, 0.576),   # t-cmc: hacia fuera (la 'L') → cruzado hacia el meñique
+    15: (0.0, 1.745),      # MCP: recto → doblado del todo
+    16: (0.0, 1.867),      # IP:  recto → doblado del todo
+}
+
+# Márgenes: qué parte de TU recorrido ya cuenta como extremo (inicio, final). Con (0.10, 0.20)
+# el robot cierra el puño del todo con el 80 % de tu puño de calibración y se estira del todo
+# con tu mano "casi" abierta. Claves: "flex", "abd", "pulgar" o el nombre de un actuador
+# (p. ej. "indice_pip": (0.10, 0.30)). (0, 0) = como antes.
+MANUS_MARGEN = {"flex": (0.10, 0.20), "abd": (0.10, 0.15), "pulgar": (0.10, 0.15)}
+
+# Poses intermedias: el robot pasa EXACTAMENTE por aquí cuando repites esa pose (rad).
+MANUS_ROBOT_INTERMEDIO = {
+    7:  {"abierta": 0.0},        # corazón recto con la mano abierta
+    13: {"pulgar_perp": -0.16},  # pulgar perpendicular = lo más lejos de la palma
+    14: {"pulgar_perp": -0.31},
+    15: {"pulgar_cruz": 1.40},   # pulgar cruzado = yema APOYADA en la palma
+}
+
+# 3) Mano física (orca_hardware.py)
+ORCA_HW_SIGNOS             = {}      # tu mano va en el MISMO sentido que el sim (comprobado)
+ORCA_HW_CIERRE_COMPLETO    = True    # "cerrado" del sim → tope de flexión calibrado + sobrecarrera
+ORCA_HW_SOBRECARRERA_DEG   = 4.0     # grados más allá del tope de flexión (empuja con max_current)
+ORCA_HW_APERTURA_EXTRA_DEG = 5.0     # dedo recto del sim → 5° más estirado en la mano real (no el pulgar)
+ORCA_HW_APERTURA_COMPLETA  = False   # True = "abierto" del sim → tope de EXTENSIÓN (hiperextiende)
+ORCA_HW_TRAMO_FIEL         = (0.25, 0.60)   # zona central sin estirar (fracción del recorrido)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# POSE DEL BRAZO AL PULSAR [A] (9-oct) — pega este bloque AL FINAL de config.py
+# ═══════════════════════════════════════════════════════════════════════════
+# Los 6 joints del ARCTOS (rad) a los que va el brazo al pulsar [A], en vez de la T-pose.
+# Se queda ahí mientras calibras la T-pose (~2 s) y, cuando empieza a imitarte, sale desde
+# ahí (la muñeca del ARCTOS vuelve a JOINT5_FIJO). None = como antes (T-pose).
+# Sacada de la foto del brazo real con la cinemática y las mallas del ARCTOS (el modelo
+# superpuesto a la foto coincide en base, hombro, codo y antebrazo):
+#   joint1 +90°  brazo girado a SU izquierda (la cara de la base con las rejillas mira a la
+#                cámara; desde la vista inicial del visor se ve igual que en la foto)
+#   joint2 −21°  hombro inclinado hacia atrás
+#   joint3 −34°  antebrazo casi horizontal (13° hacia abajo)
+#   joint4   0°
+#   joint5 −77°  muñeca doblada hasta que la brida mira al suelo
+#   joint6   0°  (en la foto no se ve el giro de la brida)
+POSE_BRAZO_ACTIVAR = [1.571, -0.37, -0.60, 0.0, 0.0, 0.0]
+
+# Velocidad / aceleración del comando continuo de joint4 y joint5 (como SUAVE_VEL_MAX)
+SUAVE_VEL_MUNECA_ARCTOS  = 1.5    # rad/s
+SUAVE_ACEL_MUNECA_ARCTOS = 15.0   # rad/s²

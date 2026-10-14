@@ -219,6 +219,19 @@ def main():
     # — Cargar modelo MuJoCo (UNA SOLA VEZ) —
     modelo = mujoco.MjModel.from_xml_path(RUTA_XML)
     datos  = mujoco.MjData(modelo)
+    # ── Reflejo del suelo: apagado al arrancar, tecla B para activarlo ──
+    _refl_orig = {i: float(modelo.mat_reflectance[i])
+                  for i in range(modelo.nmat) if modelo.mat_reflectance[i] > 0}
+    for _i in _refl_orig:
+        modelo.mat_reflectance[_i] = 0.0
+    _reflejo_on = [False]
+
+
+    def _tecla_visor(keycode):
+        if chr(keycode).lower() == 'b':        # B = alternar reflejo del suelo
+            _reflejo_on[0] = not _reflejo_on[0]
+            for _i, _v in _refl_orig.items():
+                modelo.mat_reflectance[_i] = _v if _reflejo_on[0] else 0.0
     visor  = mujoco.viewer.launch_passive(modelo, datos)
 
     # ── INICIALIZACIÓN DEL HARDWARE REAL ──
@@ -878,6 +891,7 @@ def main():
                 est_brazo        = EstimadorLongitudesBrazo(LONG_BRAZO_MANUAL)
                 suav_brazo       = SuavizadorND(n_dim=3, ventana=IMITAR_SUAVIZADO)
                 brazo_imit_activo = False   # True cuando el brazo ya está imitando
+                sujetar_pose_A   = False    # 9-oct: brazo quieto en POSE_BRAZO_ACTIVAR hasta imitar
                 refs_tpose       = []       # (az, elev, codo) medidos durante la calibración
                 tpose_med        = None     # mediana de refs_tpose (None = sin corrección)
                 tpose_ref        = tuple(T_POSE_HUMANA)   # T-pose usada como referencia
@@ -916,7 +930,14 @@ def main():
                 #      antes de cada mj_step; el bucle solo le PUBLICA objetivos.
                 gen_brazo = None
                 if SUAVE_ACTIVO and MODO_BRAZO == "imitacion":
-                    gen_brazo = GeneradorSuave((0, 1, 2, prono_idx), SUAVE_VEL_MAX, SUAVE_ACEL_MAX)
+                    # 9-oct: también joint4/joint5 (la pose de [A] los mueve): sin tirones
+                    _extra_suave = [_i for _i in (3, 4) if _i != prono_idx]
+                    gen_brazo = GeneradorSuave(
+                        (0, 1, 2, prono_idx, *_extra_suave),
+                        tuple(SUAVE_VEL_MAX)
+                        + (float(globals().get("SUAVE_VEL_MUNECA_ARCTOS", 1.5)),) * len(_extra_suave),
+                        tuple(SUAVE_ACEL_MAX)
+                        + (float(globals().get("SUAVE_ACEL_MUNECA_ARCTOS", 15.0)),) * len(_extra_suave))
                     gen_brazo.activar(datos)
                     print(f"🧈 Comando continuo del brazo activo (vel. máx {SUAVE_VEL_MAX} rad/s, "
                           f"acel. máx {SUAVE_ACEL_MAX} rad/s²)")
@@ -1199,9 +1220,23 @@ def main():
                                           f"q2={q_ref_sim[1]:.2f} q3={q_ref_sim[2]:.2f} ↔ tu T-pose. "
                                           "El brazo no se mueve al calibrar.")
                                 suav_brazo.reset()
+                                # 9-oct: se suelta la pose de [A]: joint4/joint5 vuelven a los de la
+                                # teleoperación, y la geometría del híbrido se calcula YA con ellos
+                                # (preparar_hibrido usa los joint4..6 que tenga el brazo ahora).
+                                _q45 = (float(POSICION_STANDBY_BRAZO[3]), float(JOINT5_FIJO))
+                                if sujetar_pose_A:
+                                    sujetar_pose_A = False
+                                    _enviar_brazo((3, 4), _q45)
+                                _qi45 = qpos_idx_brazo[3:5]
+                                _guarda45 = [float(datos.qpos[_i]) for _i in _qi45]
+                                for _i, _v in zip(_qi45, _q45):
+                                    datos.qpos[_i] = _v
                                 hib = preparar_hibrido(modelo, datos, qpos_idx_brazo)
                                 if LIMITES_HUMANOS:   # 7-oct: límites de hombro/codo/suelo en la IK
                                     completar_hib(modelo, datos, hib)
+                                for _i, _v in zip(_qi45, _guarda45):
+                                    datos.qpos[_i] = _v
+                                mujoco.mj_kinematics(modelo, datos)
                                 q_ik_prev = None
                                 suav_obj.reset()
                                 suav_codo.reset()
@@ -1583,7 +1618,8 @@ def main():
                                         print(f"[PRONO{' mundo' if _q6_mundo is not None else ''}] "
                                               f"giro={math.degrees(d):6.1f}°  →  "
                                               f"q6 CMD={q_prono:5.2f}  REAL={datos.qpos[qpos_idx_brazo[prono_idx]]:5.2f} rad")
-                        datos.ctrl[4] = JOINT5_FIJO      # joint5 siempre recto
+                        if not sujetar_pose_A:           # 9-oct: no durante la pose de [A]
+                            _enviar_brazo((4,), (JOINT5_FIJO,))   # joint5 siempre recto
 
                         # Dibujar esqueleto en el frame
                         mp_draw.draw_landmarks(
@@ -1766,7 +1802,17 @@ def main():
                         roll_ref, refs_roll, d_prev = None, [], 0.0
                         if MODO_BRAZO == "imitacion":
                             est_brazo.iniciar_calibracion()
-                            if IMITAR_REFERENCIA == "absoluto" and IMITAR_TPOSE_SIM_AL_CALIBRAR:
+                            _pose_A = globals().get("POSE_BRAZO_ACTIVAR")
+                            if _pose_A is not None:
+                                # 9-oct: pose fija al pulsar [A] (config.POSE_BRAZO_ACTIVAR). Se
+                                # sujeta mientras calibras la T-pose; al empezar a imitarte, el
+                                # brazo sale de aquí y la muñeca del ARCTOS vuelve a JOINT5_FIJO.
+                                _enviar_brazo(range(len(_pose_A)), [float(_v) for _v in _pose_A])
+                                sujetar_pose_A = True
+                                print("🦾 [A] Brazo a POSE_BRAZO_ACTIVAR: "
+                                      + "  ".join(f"q{_k + 1}={float(_v):+.2f}" for _k, _v in enumerate(_pose_A))
+                                      + " rad")
+                            elif IMITAR_REFERENCIA == "absoluto" and IMITAR_TPOSE_SIM_AL_CALIBRAR:
                                 _qT = angulos_humano_a_q_brazo(
                                     math.radians(T_POSE_HUMANA[0]),
                                     math.radians(T_POSE_HUMANA[1]),
@@ -1802,6 +1848,7 @@ def main():
                         grabando = False
                         suav_dedos.reset()
                         # PASO 7.1: el brazo vuelve al reposo de forma continua (sin tirón)
+                        sujetar_pose_A = False
                         brazo_fino, brazo_congelado = False, False
                         canal_palma.reset(); canal_giro.reset()
                         aplicar_modo_brazo(False, False, (), gen_brazo)

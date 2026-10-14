@@ -1,25 +1,78 @@
-# --- VARIABLES OBLIGATORIAS PARA LA IA DE DON ORCA ---
-mano_adjustments: [
-    [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
-    [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
-    [0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,0,0],
-    [0,0,0]
-]
-
-actuator_names: [
-    "wrist", "thumb_cmc", "thumb_abd", "thumb_mcp", "thumb_dip",
-    "index_abd", "index_mcp", "index_pip", "middle_abd", "middle_mcp",
-    "middle_pip", "ring_abd", "ring_mcp", "ring_pip", "pinky_abd",
-    "pinky_mcp", "pinky_pip"
-]
-
-tower_joint_names: [
-    "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-    "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"
-]
-# -----------------------------------------------------
-
 port: /dev/ttyUSB0
+mano_adjustments:
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+- - 0
+  - 0
+  - 0
+actuator_names:
+- wrist
+- thumb_cmc
+- thumb_abd
+- thumb_mcp
+- thumb_dip
+- index_abd
+- index_mcp
+- index_pip
+- middle_abd
+- middle_mcp
+- middle_pip
+- ring_abd
+- ring_mcp
+- ring_pip
+- pinky_abd
+- pinky_mcp
+- pinky_pip
+tower_joint_names:
+- shoulder_pan_joint
+- shoulder_lift_joint
+- elbow_joint
+- wrist_1_joint
+- wrist_2_joint
+- wrist_3_joint
 version: 0.2.1
 baudrate: 1000000
 max_current: 800
@@ -221,7 +274,3 @@ calibration_sequence:
 - step: 16
   joints:
     wrist: extend
-    
-
-
-

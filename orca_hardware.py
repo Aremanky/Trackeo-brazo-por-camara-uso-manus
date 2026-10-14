@@ -16,31 +16,39 @@ OrcaHand espera GRADOS en SU convención → la traducción se hace aquí (ver a
 Las inversiones de MOTOR (signos negativos en joint_to_motor_map) las sigue gestionando
 el SDK; lo que se corrige aquí es otra cosa: el SENTIDO DEL ÁNGULO de cada articulación.
 
-TRADUCCIÓN SIM → MANO REAL (8-oct)
-----------------------------------
-La simulación iba bien pero la mano física no cerraba el puño, no hacía pinzas y no
-cerraba el pulgar. Causas en este puente (las dos primeras eran invisibles en el sim):
+TRADUCCIÓN SIM → MANO REAL (8-oct, revisada tras la prueba en la mano)
+----------------------------------------------------------------------
+  1) SENTIDO DE LAS ABDUCCIONES. En el MJCF, ángulo + mueve la yema HACIA EL PULGAR (los
+     cuatro dedos, comprobado con la cinemática del propio MJCF). orca_core declara lo
+     contrario para la OrcaHand de referencia, pero la prueba en TU mano demostró que va
+     como el simulador: invertirlas las dejaba al revés. Por defecto ya NO se invierte
+     nada. ORCA_HW_SIGNOS permite invertir articulaciones sueltas si algún día hace falta.
 
-  1) ABDUCCIONES INVERTIDAS (index/middle/ring/pinky_abd). En el MJCF, ángulo + mueve la
-     yema HACIA EL PULGAR; en orca_core, + la mueve HACIA EL MEÑIQUE. Pruebas: el ROM de
-     index_abd del config.yaml es [-30, 25], espejo del rango del MJCF [-25, 30]; la
-     postura neutral del SDK (índice −14°, anular +10°, meñique +22°) solo es un abanico
-     natural con + = hacia el meñique; y el propio orca_core actual lo declara
-     (kinematics/v2_kinematics.yaml: sign −1 en las cuatro abducciones). Se mandaba el
-     ángulo del sim tal cual → con tus dedos JUNTOS (puño, pinza) la mano real los ABRÍA
-     en abanico y el índice se iba hacia el pulgar, cerrándole el paso.
-     → ORCA_HW_SIGNOS (por defecto, −1 en las cuatro abducciones).
+  2) RECORRIDO COMPLETO EN LA MANO REAL (solo FLEXIONES: mcp/pip de los dedos, mcp/dip
+     del pulgar). El SDK convierte grados en posición de motor con los topes que grabó al
+     calibrar, y los graba con el par QUITADO (el tendón ya se ha relajado), así que
+     mandar justo el ROM deja el dedo algo antes del tope. Ahora cada flexión pasa por un
+     tramo lineal por partes:
+         "abierto" del sim  → el mismo ángulo, ORCA_HW_APERTURA_EXTRA_DEG (5°) más estirado
+                              (solo los 4 dedos; el pulgar va igual que el sim: las pinzas
+                              lo usan casi recto y 5° de más separarían las yemas)
+         zona central       → mismo ángulo que el sim       (ORCA_HW_TRAMO_FIEL, 25-60 %)
+         "cerrado" del sim  → tope de FLEXIÓN + sobrecarrera (ORCA_HW_CIERRE_COMPLETO)
+     "Abierto"/"cerrado" del sim salen de MANUS_RANGO_ROBOT (guante) o de LIMITES_CTRL
+     (cámara). La sobrecarrera manda unos grados MÁS ALLÁ del tope: en modo
+     current_based_position el motor empuja como mucho con max_current (como al calibrar).
+     Nunca se aplica a la muñeca (modo multivuelta, sin límite de corriente).
+     Al abrir NO se va al tope de extensión: en esta mano ese tope está HIPEREXTENDIDO
+     (mcp −25°, pip −15°, igual que en el MJCF) y el dedo quedaría doblado hacia atrás.
+     El dedo recto del sim (mcp −4°…−8°, ver MANUS_RANGO_ROBOT) ya es recto en la mano
+     real; los 5° de más compensan el tendón relajado de la calibración.
+     ORCA_HW_APERTURA_COMPLETA = True recupera "abierto → tope de extensión".
 
-  2) EL CIERRE DEL SIM NO LLEGABA AL TOPE REAL. El puño del guante es mcp 1.70 rad (97°),
-     pip 1.80 (103°), pulgar mcp/ip 1.50 (86°): 97 % del recorrido calibrado en los dedos,
-     89 % en el nudillo del pulgar y 83 % en su punta. Además el SDK graba cada tope con
-     el par QUITADO (el tendón se relaja), así que hasta el 100 % se queda algo corto.
-     → ORCA_HW_CIERRE_COMPLETO: el último tramo del recorrido de cada FLEXIÓN se estira
-       para que el "cerrado" del sim sea el tope calibrado de la mano real; por debajo
-       de ORCA_HW_CIERRE_RODILLA (60 % del cierre) no cambia nada.
-     → ORCA_HW_SOBRECARRERA_DEG: unos grados más allá del tope, SOLO en flexiones. Los
-       dedos van en current_based_position: empujan como mucho con max_current (igual que
-       al calibrar). Nunca en la muñeca (modo multivuelta, sin límite de corriente).
+  2b) ROM DEL SDK ≠ RANGO DEL MODELO: al conectar se comparan los joint_roms del
+     config.yaml del SDK con los rangos del MJCF. En el config.yaml de la v2,
+     index_abd = [−30, 25] mientras que el MJCF (y tu mano, que va en su mismo sentido)
+     usan [−25, 30]: con el mismo recorrido de 55°, el índice queda 5° desplazado hacia el
+     pulgar. Se avisa y se dice cómo corregirlo (cambiar el ROM; sin recalibrar).
 
   3) SEGUIMIENTO: cada ORCA_HW_SEGUIMIENTO_CADA_S se lee la mano (posición + corriente)
      y se avisa de las articulaciones que no llegan a lo pedido, diciendo si es por
@@ -48,13 +56,16 @@ cerraba el pulgar. Causas en este puente (las dos primeras eran invisibles en el
      o calibración desfasada → tension.py + calibrate.py del SDK).
 
   Parámetros opcionales (config.py); si no están, se usan estos valores:
-      ORCA_HW_SIGNOS            = {"index_abd": -1, "middle_abd": -1,
-                                   "ring_abd": -1, "pinky_abd": -1}   # {} = como antes
-      ORCA_HW_CIERRE_COMPLETO   = True
-      ORCA_HW_CIERRE_RODILLA    = 0.6     # fracción del cierre donde empieza el estirado
-      ORCA_HW_CIERRE_SIM        = {}      # p. ej. {"thumb_dip": 1.50}: "cerrado" del sim (rad)
-      ORCA_HW_SOBRECARRERA_DEG  = 4.0     # 0 = sin sobrecarrera (se usa la API pública)
-      ORCA_HW_SEGUIMIENTO       = True
+      ORCA_HW_SIGNOS                 = {}           # p. ej. {"index_abd": -1} invierte una
+      ORCA_HW_CIERRE_COMPLETO        = True
+      ORCA_HW_APERTURA_EXTRA_DEG     = 5.0          # dedo recto del sim → 5° más estirado (no el pulgar)
+      ORCA_HW_APERTURA_COMPLETA      = False        # True: abierto → tope de extensión
+      ORCA_HW_TRAMO_FIEL             = (0.25, 0.60) # parte central sin estirar (fracción)
+      ORCA_HW_CIERRE_SIM             = {}           # p. ej. {"thumb_dip": 1.50}  (rad)
+      ORCA_HW_APERTURA_SIM           = {}           # p. ej. {"index_mcp": -0.07} (rad)
+      ORCA_HW_SOBRECARRERA_DEG       = 4.0          # más allá del tope de FLEXIÓN
+      ORCA_HW_SOBRECARRERA_EXT_DEG   = 0.0          # más allá del tope de EXTENSIÓN
+      ORCA_HW_SEGUIMIENTO            = True
       ORCA_HW_SEGUIMIENTO_CADA_S     = 3.0
       ORCA_HW_SEGUIMIENTO_UMBRAL_DEG = 6.0
 
@@ -112,22 +123,14 @@ def _param(nombre, defecto):
     return getattr(_cfg, nombre, defecto) if _cfg is not None else defecto
 
 
-def _estirar(x, x_rodilla, x_cierre, y_cierre):
-    """Tramo final estirado: x_rodilla → x_rodilla, x_cierre → y_cierre (grados)."""
-    if x <= x_rodilla:
-        return x
-    if x >= x_cierre:
-        return y_cierre + (x - x_cierre)
-    return x_rodilla + (x - x_rodilla) * (y_cierre - x_rodilla) / (x_cierre - x_rodilla)
-
-
-def _encoger(y, x_rodilla, x_cierre, y_cierre):
-    """Inversa de _estirar (para leer la postura real en la convención del sim)."""
-    if y <= x_rodilla:
-        return y
-    if y >= y_cierre:
-        return x_cierre + (y - y_cierre)
-    return x_rodilla + (y - x_rodilla) * (x_cierre - x_rodilla) / (y_cierre - x_rodilla)
+def _tramo(x, xs, ys):
+    """Lineal por partes por los puntos (xs, ys), crecientes; fuera de ellos, pendiente 1.
+    Con (xs, ys) cambiados de sitio es su inversa exacta."""
+    if x <= xs[0]:
+        return ys[0] + (x - xs[0])
+    if x >= xs[-1]:
+        return ys[-1] + (x - xs[-1])
+    return float(np.interp(x, xs, ys))
 
 
 def analizar_seguimiento(wrapper, estado, umbral_deg, solo=None):
@@ -198,14 +201,25 @@ class OrcaHardwareWrapper:
         "thumb_cmc": 13, "thumb_abd": 14, "thumb_mcp": 15, "thumb_dip": 16,
     }
 
-    # Flexiones (cierre de dedos y pulgar): las ÚNICAS con cierre completo y sobrecarrera.
+    # Flexiones (cierre de dedos y pulgar): las ÚNICAS con recorrido completo y sobrecarrera.
     # Nunca la muñeca (multi_turn_position, sin límite de corriente), ni las abducciones,
-    # ni thumb_cmc / thumb_abd.
+    # ni thumb_cmc / thumb_abd (esas ya usan el mismo rango en el sim y en el SDK).
     FLEXION = ("index_mcp", "index_pip", "middle_mcp", "middle_pip", "ring_mcp",
                "ring_pip", "pinky_mcp", "pinky_pip", "thumb_mcp", "thumb_dip")
 
-    # Sentido del ángulo sim (MJCF) → orca_core. Ver cabecera, punto 1.
-    SIGNOS_DEFECTO = {"index_abd": -1, "middle_abd": -1, "ring_abd": -1, "pinky_abd": -1}
+    # Sentido del ángulo sim (MJCF) → orca_core. Ver cabecera, punto 1: en tu mano, igual.
+    SIGNOS_DEFECTO = {}
+
+    # Rangos de las articulaciones en el MJCF de la OrcaHand v2 derecha (grados), para
+    # comprobar que los joint_roms del config.yaml del SDK dicen lo mismo (cabecera, 2b).
+    RANGO_MJCF_DEG = {
+        "wrist": (-65, 35), "thumb_cmc": (-45, 33), "thumb_abd": (-18, 55),
+        "thumb_mcp": (-25, 100), "thumb_dip": (-15, 107),
+        "index_abd": (-25, 30), "middle_abd": (-27, 27), "ring_abd": (-27, 27),
+        "pinky_abd": (-30, 30),
+        **{f"{d}_mcp": (-25, 100) for d in ("index", "middle", "ring", "pinky")},
+        **{f"{d}_pip": (-15, 107) for d in ("index", "middle", "ring", "pinky")},
+    }
 
     # Debug de pulgar: True para imprimir valores cada DEBUG_CADA_N envíos
     # (a 50 envíos/s, 30 envíos ≈ 0.6 s)
@@ -256,15 +270,19 @@ class OrcaHardwareWrapper:
                 print(f"⚠️  [ORCA HARDWARE] ORCA_HW_SIGNOS: joint desconocido '{joint}'")
         self._signo = np.array([-1.0 if float(signos.get(j, 1)) < 0 else 1.0
                                 for j in self._joints])
-        self.cierre_completo = bool(_param("ORCA_HW_CIERRE_COMPLETO", True))
-        self.rodilla         = min(max(float(_param("ORCA_HW_CIERRE_RODILLA", 0.6)), 0.0), 0.95)
-        self.sobrecarrera    = max(0.0, float(_param("ORCA_HW_SOBRECARRERA_DEG", 4.0)))
+        self.cierre_completo   = bool(_param("ORCA_HW_CIERRE_COMPLETO", True))
+        self.apertura_completa = bool(_param("ORCA_HW_APERTURA_COMPLETA", False))
+        self.apertura_extra    = max(0.0, float(_param("ORCA_HW_APERTURA_EXTRA_DEG", 5.0)))
+        fiel = tuple(_param("ORCA_HW_TRAMO_FIEL", (0.25, 0.60)))
+        self.fiel = (min(max(float(fiel[0]), 0.05), 0.9), min(max(float(fiel[1]), 0.1), 0.95))
+        self.sobrecarrera      = max(0.0, float(_param("ORCA_HW_SOBRECARRERA_DEG", 4.0)))
+        self.sobrecarrera_ext  = max(0.0, float(_param("ORCA_HW_SOBRECARRERA_EXT_DEG", 0.0)))
         self.seguimiento     = bool(_param("ORCA_HW_SEGUIMIENTO", True))
         self.cada_s_seg      = float(_param("ORCA_HW_SEGUIMIENTO_CADA_S", 3.0))
         self.umbral_seg      = float(_param("ORCA_HW_SEGUIMIENTO_UMBRAL_DEG", 6.0))
         self._rom           = {}     # joint → (lo, hi) del config.yaml del SDK (grados)
         self._rango_sdk     = {}     # joint → (lo, hi) que se puede mandar (con sobrecarrera)
-        self._cierre        = {}     # joint → (x_rodilla, x_cierre, y_cierre) en grados
+        self._tramos        = {}     # joint → (xs_sim, ys_sdk) en grados, crecientes
         self._motor_directo = False  # True = sobrecarrera activa (sin el recorte del SDK)
         self._ult_pose      = None   # última pose mandada (grados, convención orca_core)
 
@@ -331,72 +349,122 @@ class OrcaHardwareWrapper:
     # TRADUCCIÓN SIM (MJCF, rad) ↔ ORCA_CORE (grados)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _cierre_sim_grados(self, joint):
-        """Valor del sim (grados, ya con el signo aplicado) que significa 'cerrado del todo'."""
-        a_mano = dict(_param("ORCA_HW_CIERRE_SIM", {}))
+    def _extremo_sim_grados(self, joint, cual):
+        """Valor del sim (grados, ya con signo) que significa 'cerrado' (cual='max') o
+        'abierto' (cual='min') del todo: el extremo del guante (MANUS_RANGO_ROBOT) o, con la
+        cámara, el de LIMITES_CTRL (cerrado) / 0 (abierto)."""
+        a_mano = dict(_param("ORCA_HW_CIERRE_SIM" if cual == "max" else "ORCA_HW_APERTURA_SIM", {}))
         if joint in a_mano:
             rad = float(a_mano[joint])
         else:
             k = self.JOINT_A_CTRL[joint]
             rango = dict(_param("MANUS_RANGO_ROBOT", {})).get(k)
             if str(_param("FUENTE_DEDOS", "camara")) == "manus" and rango is not None:
-                rad = max(float(rango[0]), float(rango[1]))     # puño del guante
-            else:
+                rad = (max if cual == "max" else min)(float(rango[0]), float(rango[1]))
+            elif cual == "max":
                 lim = _param("LIMITES_CTRL", None)
                 if lim is None:
                     return None
-                rad = float(lim[k][1])                          # puño de la cámara
+                rad = float(lim[k][1])
+            else:
+                rad = 0.0
         return float(self._signo[self._joints.index(joint)]) * math.degrees(rad)
 
     def _preparar_traduccion(self):
-        """ROMs del config.yaml del SDK → rangos y tramos de cierre. Tras init_joints()."""
+        """ROMs del config.yaml del SDK → rangos y tramos sim → real. Tras init_joints()."""
         cfg = self._hand.config
         self._rom = {j: (float(cfg.joint_roms_dict[j][0]), float(cfg.joint_roms_dict[j][1]))
                      for j in self._joints}
         # Sobrecarrera = mandar más allá del ROM, que set_joint_positions() recorta: se
         # usa el mismo cálculo del SDK (_joint_to_motor_pos) sin ese recorte.
-        self._motor_directo = (self.sobrecarrera > 0.0
+        self._motor_directo = ((self.sobrecarrera > 0.0 or self.sobrecarrera_ext > 0.0)
                                and callable(getattr(self._hand, "_joint_to_motor_pos", None))
                                and callable(getattr(self._hand, "_set_motor_pos", None)))
-        extra = self.sobrecarrera if self._motor_directo else 0.0
-        self._rango_sdk, self._cierre = {}, {}
+        ext_f = self.sobrecarrera if self._motor_directo else 0.0
+        ext_e = self.sobrecarrera_ext if self._motor_directo else 0.0
+        self._rango_sdk, self._tramos = {}, {}
         for j in self._joints:
             lo, hi = self._rom[j]
             if j not in self.FLEXION:
                 self._rango_sdk[j] = (lo, hi)
                 continue
-            self._rango_sdk[j] = (lo, hi + extra)
-            x_c = self._cierre_sim_grados(j) if self.cierre_completo else None
-            y_c = hi + extra
-            if x_c is not None and x_c > 0.0:
-                x_k = self.rodilla * x_c
-                if x_c > x_k + 1.0 and y_c > x_k + 1.0:
-                    self._cierre[j] = (x_k, x_c, y_c)
+            self._rango_sdk[j] = (lo - ext_e, hi + ext_f)
+            x_a = self._extremo_sim_grados(j, "min")
+            x_c = self._extremo_sim_grados(j, "max")
+            if x_a is None or x_c is None or x_c - x_a < 10.0:
+                continue
+            k1 = x_a + self.fiel[0] * (x_c - x_a)          # zona central: mismo ángulo
+            k2 = x_a + max(self.fiel[1], self.fiel[0] + 0.05) * (x_c - x_a)
+            xs, ys = [k1, k2], [k1, k2]
+            if self.apertura_completa:
+                y_a = lo - ext_e                             # abierto del sim → tope de extensión
+            elif j.startswith("thumb"):
+                y_a = x_a          # pulgar: igual que el sim (las pinzas lo usan casi recto)
+            else:
+                y_a = max(x_a - self.apertura_extra, lo - ext_e)   # recto del sim → algo más
+            if y_a < x_a - 0.5 and y_a < k1 - 1.0:
+                xs.insert(0, x_a); ys.insert(0, y_a)
+            if self.cierre_completo and hi + ext_f > k2 + 1.0:
+                xs.append(x_c); ys.append(hi + ext_f)        # cerrado del sim → tope de flexión
+            if len(xs) > 2:
+                self._tramos[j] = (np.array(xs), np.array(ys))
 
         invertidas = [j for k, j in enumerate(self._joints) if self._signo[k] < 0]
         print("🔁 [ORCA HARDWARE] Traducción sim → mano real:")
-        print("   · sentido invertido: " + (", ".join(invertidas) if invertidas else "ninguna")
-              + ("  (sim + = hacia el pulgar; orca_core + = hacia el meñique)" if invertidas else ""))
-        if self._cierre:
-            print("   · cierre completo (sim → real): " + "  ".join(
-                f"{j.replace('_', ' ')} {c[1]:.0f}°→{c[2]:.0f}°" for j, c in self._cierre.items()))
-        print(f"   · sobrecarrera de flexión: {extra:.0f}°"
-              + ("" if self._motor_directo or self.sobrecarrera == 0 else
-                 "  (desactivada: este SDK no expone _joint_to_motor_pos/_set_motor_pos)"))
+        print("   · sentido invertido: " + (", ".join(invertidas) if invertidas else
+                                            "ninguna (la mano va en el mismo sentido que el sim)"))
+        if self._tramos:
+            print("   · recorrido completo (sim → real, grados):")
+            for j, (xs, ys) in self._tramos.items():
+                ab = (f"abierto {xs[0]:6.1f} → {ys[0]:6.1f}" if abs(xs[0] - ys[0]) > 0.05
+                      else "abierto  igual que el sim ")
+                ce = (f"cerrado {xs[-1]:6.1f} → {ys[-1]:6.1f}" if abs(xs[-1] - ys[-1]) > 0.05
+                      else "cerrado igual que el sim")
+                print(f"       {j:10s} {ab}   ·   {ce}")
+        print(f"   · sobrecarrera: {ext_f:.0f}° al cerrar, {ext_e:.0f}° al abrir"
+              + ("" if self._motor_directo or (self.sobrecarrera == 0 and self.sobrecarrera_ext == 0)
+                 else "  (desactivada: este SDK no expone _joint_to_motor_pos/_set_motor_pos)"))
         print(f"   · modo {getattr(cfg, 'control_mode', '?')}, max_current = "
               f"{getattr(cfg, 'max_current', '?')} (config.yaml del SDK)")
-        if invertidas:
-            print("   Comprobación: en la postura neutral del arranque el índice queda abierto "
-                  "hacia el pulgar y el meñique hacia fuera (index_abd −14°, pinky_abd +22°).")
+        for linea in self.comprobar_roms():
+            print("   ⚠️  " + linea)
+
+    def comprobar_roms(self):
+        """Avisos si un joint_rom del config.yaml del SDK no coincide con el rango del MJCF
+        (en el sentido de la mano, ORCA_HW_SIGNOS). Ver cabecera, 2b."""
+        avisos = []
+        for k, j in enumerate(self._joints):
+            ref = self.RANGO_MJCF_DEG.get(j)
+            if ref is None or j not in self._rom:
+                continue
+            if self._signo[k] < 0:
+                ref = (-ref[1], -ref[0])
+            lo, hi = self._rom[j]
+            if abs(lo - ref[0]) <= 1.0 and abs(hi - ref[1]) <= 1.0:
+                continue
+            if abs((hi - lo) - (ref[1] - ref[0])) <= 1.0:
+                ruta = os.path.relpath(self._config_path, os.path.dirname(os.path.abspath(__file__)))
+                avisos.append(
+                    f"ROM de {j} en el SDK: [{lo:g}, {hi:g}] · en el modelo: [{ref[0]:g}, {ref[1]:g}]"
+                    f" (mismo recorrido, desplazado {ref[0] - lo:+g}°). Si los topes reales son los "
+                    f"del modelo, la mano real va {ref[0] - lo:+g}° por delante del sim"
+                    f"{' (+ = hacia el pulgar)' if j.endswith('_abd') and j != 'thumb_abd' else ''}. "
+                    f"Para igualarlos: en {ruta} pon  {j}: [{ref[0]:g}, {ref[1]:g}]  "
+                    f"(mismo recorrido: NO hace falta recalibrar).")
+            else:
+                avisos.append(
+                    f"ROM de {j} en el SDK: [{lo:g}, {hi:g}] · en el modelo: [{ref[0]:g}, {ref[1]:g}]"
+                    f" (recorrido distinto: la mano real y el sim no coincidirán en esa articulación).")
+        return avisos
 
     def _a_sdk(self, q):
         """q (orden de motor, rad, convención sim) → {joint: grados orca_core}, recortado."""
         pose = {}
         for k, j in enumerate(self._joints):
             g = self._signo[k] * math.degrees(float(q[k]))
-            c = self._cierre.get(j)
-            if c is not None:
-                g = _estirar(g, *c)
+            t = self._tramos.get(j)
+            if t is not None:
+                g = _tramo(g, t[0], t[1])
             lo, hi = self._rango_sdk.get(j, (-1e9, 1e9))
             pose[j] = min(max(g, lo), hi)
         return pose
@@ -408,9 +476,9 @@ class OrcaHardwareWrapper:
             g = grados.get(j)
             if g is None:
                 return None
-            c = self._cierre.get(j)
-            if c is not None:
-                g = _encoger(float(g), *c)
+            t = self._tramos.get(j)
+            if t is not None:
+                g = _tramo(float(g), t[1], t[0])
             q[k] = math.radians(self._signo[k] * float(g))
         return q
 

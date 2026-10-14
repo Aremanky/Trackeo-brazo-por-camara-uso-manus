@@ -6,6 +6,7 @@ __pycache__/
 # C extensions
 *.so
 
+MUJOCO_LOG.TXT
 MANUS_Core_3.2.1_SDK_Linux/
 
 # Distribution / packaging
