@@ -211,6 +211,10 @@
       </body>
     </body>
   </worldbody>
+  <!-- Decoración corporativa Elecnor (solo visual: sin colisión, sin masa, sin bodies nuevos).
+       Materiales primero (los usan también la mesa y el taladro) y luego el escenario base. -->
+  <include file="decoracion/deco_assets.xml"/>
+  <include file="decoracion/deco_escena_base.xml"/>
   <include file="mesa_trabajo.xml"/>
   <include file="escena_taladro.xml"/>
 
