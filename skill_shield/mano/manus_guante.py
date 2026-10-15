@@ -25,55 +25,79 @@ Datos del SDK (MANUS Core 3.2.1, Python):
   · lib.CoreSdk_VibrateFingersForGlove(glove_id, float[5])  (pulgar → meñique, 0..1)
 
 ═══════════════════════════════════════════════════════════════════════════════
-CORRESPONDENCIA GUANTE → ORCAHAND (v2, 8-oct): POR RANGOS, NO POR REGRESIÓN
+v4 (15-oct) — IMITACIÓN 1:1: TU ÁNGULO = ÁNGULO DEL ROBOT
 ═══════════════════════════════════════════════════════════════════════════════
-Cada actuador k de la mano se calcula así:
+Antes (v2-v3) el robot NO copiaba tu mano: estiraba tu recorrido al suyo (con márgenes:
+el último 20 % de tu cierre ya era su tope), pasaba a la fuerza por poses intermedias
+(p. ej. MCP del pulgar a 80° al cruzarlo) y, cerca de una pinza grabada, se mezclaba con
+una pose de contacto fija. Todo eso se ha QUITADO. Ahora cada actuador k es:
 
-    ang  = Σ ángulos de MANUS de sus "fuentes" (grados; p. ej. PIP + DIP)
-    u    = (ang - h_min) / (h_max - h_min) · ganancia   ← 0 en TU mínimo, 1 en TU máximo
-    ctrl = línea por tramos por los nudos            (rad, recortado a LIMITES_CTRL)
-             (m_ini, r_min) · [poses intermedias (u_i, r_i)] · (1 - m_fin, r_max)
-           y fuera de ellos, el extremo (v3: márgenes MANUS_MARGEN + ROBOT_INTERMEDIO;
-           sin intermedios y sin márgenes es la recta r_min + u · (r_max - r_min) de la v2)
+    q_k = q_ref_k + signo_k · ganancia_k · (θ_k − cero_k)          (θ en rad)
 
-  · h_min / h_max son TUS ángulos medidos en calibrar_manus.py (mano abierta, puño,
-    dedos separados, pulgar en sus extremos).
-  · r_min / r_max son los ctrl del ROBOT en esas mismas poses (config.MANUS_RANGO_ROBOT).
-  · El SIGNO sale solo: si tu ángulo baja cuando el robot debe subir, h_max < h_min y la
-    recta ya es decreciente. Ya no hay ganancias ±1 "a ojo" ni mínimos cuadrados.
-  · Esto garantiza que tu puño = puño completo del robot y tu abanico = abanico
-    completo del robot (problema "no llega al límite"), y arregla los signos de las
-    abducciones (problema "anular/pulgar al revés").
+  · θ_k      tu ángulo (MANUS ergonomics, ya calibrado por MANUS para tu mano).
+  · cero_k   tu ángulo con la mano ABIERTA (pose "abierta" de calibrar_manus.py): quita el
+             desfase de cada sensor (p. ej. tu DIP del meñique marca 24° con el dedo recto).
+  · q_ref_k  lo que hace el robot en esa pose: dedos RECTOS (mcp −4°…−8°, pip 0: así
+             quedan rectos en el MJCF), dedos JUNTOS (abducciones de "juntos"), pulgar
+             recto (mcp/ip 0). Ver ROBOT_REF.
+  · signo_k  sale de tus poses de calibración (el sentido de cada canal de MANUS respecto
+             al robot); si una pose no tiene recorrido, el habitual (SIGNO_DEFECTO).
+  · ganancia 1.0 = 1:1 (config.MANUS_GANANCIA, por actuador). No hay márgenes ni topes
+             forzados: solo se recorta a los límites del modelo (LIMITES_CTRL).
 
-PINZAS: los ángulos articulares de una mano humana copiados a la OrcaHand NO juntan las
-yemas (proporciones distintas). Igual que hace retargeting.py con la cámara, cuando tu
-mano está en una de las pinzas calibradas se mezcla el comando con la pose de contacto
-del robot (PINZA_CTRL_CONTACTO, retargeting.py). La pinza se detecta por CERCANÍA en
-el espacio de ángulos del guante a las poses de pinza que grabaste al calibrar
-(RMS en grados sobre las articulaciones de ese dedo y del pulgar), con histéresis
-(MANUS_PINZA_ON_DEG / MANUS_PINZA_OFF_DEG) y mezcla continua: nada de saltos.
+DOS CASOS ESPECIALES (porque la OrcaHand no es una mano humana):
+  1) PIP de los 4 dedos. En la OrcaHand la falange media y la distal son UNA pieza
+     (FingerTipAssembly) que gira en el PIP. Para que la PUNTA del dedo del robot vaya
+     donde va la tuya, su ángulo es el de la cuerda PIP → yema de tu dedo:
+         φ = atan2(sin p + ρ·sin(p+d), cos p + ρ·cos(p+d))
+     con p = tu PIP, d = tu DIP (desde la mano abierta) y ρ = distal/media (≈ 0.8,
+     config.MANUS_RATIO_DISTAL). Dedo recto → 0; puño (p 70°, d 65°) → ~98°.
+  2) CMC del pulgar (t-cmc ← CMC_STRETCH, t-abd ← CMC_SPREAD). Son ejes distintos de los
+     tuyos, así que su CERO no puede ser "pulgar relajado = reposo del robot" sin más: se
+     ajusta (escala 1:1, solo el desfase) para que en tus poses del pulgar el robot quede
+     lo más cerca posible de su pose equivalente: pulgar FUERA (L plana) → t-cmc −0.785,
+     t-abd +0.96 · PERPENDICULAR → −0.16, −0.31 · CRUZADO → +0.576, −0.31 (ANCLAS_PULGAR).
+     Es UN número por articulación (un desfase), NO una pose que se fuerce: el pulgar sigue
+     moviéndose grado a grado contigo.
 
-Sin manus_calibracion.json (o con uno antiguo, sin "version": 2) se usa un mapeo por
-defecto con rangos humanos típicos: funciona, pero calibra en cuanto puedas.
+LO QUE NO SE PUEDE COPIAR 1:1 (y antes se "fingía" con las poses forzadas):
+  · Las proporciones de la OrcaHand no son las tuyas: con tus ángulos exactos las yemas del
+    robot pueden quedarse a unos mm de tocarse en una pinza, o el pulgar cruzado no
+    apoyarse en la palma (tú lo haces con el CMC; el robot necesitaría doblar el MCP).
+    Si quieres compensarlo, sube la ganancia de esa articulación en config.MANUS_GANANCIA
+    (deja de ser 1:1 en ella, pero sigue siendo continuo: nada salta a una pose).
 
-v3 (8-oct, tras probar la mano): RECORRIDO COMPLETO
-  · Márgenes (MANUS_MARGEN): antes el robot solo llegaba a su tope si repetías EXACTAMENTE
-    la pose extrema de la calibración (puño APRETADO, mano estirada a tope). En uso normal
-    el puño se quedaba a 1-2 cm de la palma y la mano abierta, algo doblada. Ahora el
-    último 20 % de tu cierre y el primer 10 % de tu apertura ya dan el extremo del robot.
-  · Rangos del robot al completo del modelo (_RANGO_ROBOT_DEFECTO): dedo recto de verdad
-    (en el MJCF, a 0° los dedos quedan 3-8° doblados), abanico completo, pulgar completo.
-  · Abducción del CORAZÓN (ctrl 7): antes fija a 0; ahora sale de MIDDLE_SPREAD.
-  · Poses INTERMEDIAS (ROBOT_INTERMEDIO): la recta pasa a ser una línea por tramos que
-    además pasa exactamente por la pose del robot en algunas poses de la calibración:
-    corazón recto con tu mano abierta, pulgar PERPENDICULAR (lo más lejos de la palma) y
-    pulgar CRUZADO con la yema APOYADA en la palma (pide al MCP del robot doblarse 80°:
-    el guante apenas mide el MCP del pulgar al cruzarlo y, sin eso, la yema se quedaba
-    a 9 cm de la palma).
-  · Abducción del pulgar (t-abd) sin calibrar: tu calibración del 8-oct no la pudo medir
-    (CMC_SPREAD casi no cambia entre "pulgar en el plano" y "perpendicular") y t-abd se
-    quedaba entre −2° y +11°. Ahora, mientras no se calibre, sigue al barrido del pulgar
-    (CMC_STRETCH): plano → perpendicular → cruzado. calibrar_manus.py elige el canal.
+CALIBRACIÓN: calibrar_manus.py (9 poses, ~2 min) guarda "version": 4. Una calibración
+v3 con "poses_crudas" se convierte sola al cargarla (python calibrar_manus.py --recalcular
+para guardarla ya convertida). Sin calibración: ceros típicos (funciona, pero calibra).
+
+═══════════════════════════════════════════════════════════════════════════════
+v5 (15-oct, tras el vídeo) — MODO "cierre" (por defecto): TU PUÑO = PUÑO DEL ROBOT
+═══════════════════════════════════════════════════════════════════════════════
+Con el 1:1 puro los dedos no tocaban la palma. NO era un límite del código (el índice pedía
+71° de nudillo con 100° disponibles): la OrcaHand necesita ~97° de MCP + ~103° de PIP para
+apoyar la yema en la palma y tu puño son 71-84° de MCP. Y el pulgar: tú lo cruzas sobre la
+palma con el CMC (tu MCP apenas se mueve, +1°), el robot necesita doblar su MCP ~80°.
+
+config.MANUS_MAPEO = "cierre" (por defecto) | "1:1":
+  · "cierre": cada flexión es una RECTA que pasa por dos puntos tuyos medidos al calibrar:
+        tu mano abierta → robot recto      ·      tu puño → robot con la yema en la palma
+    (pulgar: tu pulgar doblado al máximo → robot doblado al máximo). Entre medias,
+    proporcional; si cierras más que al calibrar, sigue la misma recta hasta el tope
+    mecánico. Sin márgenes, sin poses intermedias, sin pinzas: continuo y lineal.
+    Pulgar:
+      - t-cmc y t-abd: una transformación lineal de tus DOS ángulos del CMC (SPREAD,
+        STRETCH) que pasa EXACTAMENTE por tus 3 poses: fuera (L plana), perpendicular y
+        cruzado → las mismas poses del robot (ANCLAS_PULGAR). Así el pulgar del robot
+        cruza y se apoya cuando tú lo cruzas, aunque sus ejes no sean los tuyos.
+      - t-mcp: tu MCP (recto → doblado al máximo) + lo que CRUZAS el pulgar (tu CMC_STRETCH
+        desde la mano abierta hacia el meñique): cruzado → MCP del robot a 80° (yema en la
+        palma). Solo actúa al cruzar: con el pulgar abierto no se toca.
+  · "1:1": el mapeo de v4 (tu ángulo = ángulo del robot).
+  Las ABDUCCIONES de los 4 dedos van 1:1 en los dos modos.
+  Lo del robot (extremos, anclas) sale SIEMPRE de config: si la calibración tiene
+  "poses_crudas" el mapeo se rehace al cargar, así que cambiar MANUS_MAPEO,
+  MANUS_RANGO_ROBOT o MANUS_ANCLAS_PULGAR no exige recalibrar.
 """
 import json
 import math
@@ -107,22 +131,12 @@ MANUS_FUERZA_MIN  = float(_p("MANUS_FUERZA_MIN", 0.05))  # N: por debajo no vibr
 MANUS_FUERZA_MAX  = float(_p("MANUS_FUERZA_MAX", 3.0))   # N: a partir de aquí vibra al 100 %
 MANUS_VIBRACION_MAX = float(_p("MANUS_VIBRACION_MAX", 1.0))
 
-# Ganancia extra por actuador sobre la fracción de recorrido (1.0 = tu máximo = máximo del
-# robot; 1.15 = llegas al máximo del robot con el 87 % de tu recorrido, útil si no cierras
-# el puño del todo con el guante puesto). Claves: nombres de ACTUADORES (ver NOMBRES).
+# Ganancia por actuador (1.0 = 1:1). Claves: nombres de ACTUADORES (ver NOMBRES).
 MANUS_GANANCIA    = dict(_p("MANUS_GANANCIA", {}))
-
-# Pinzas (ver cabecera). Grados RMS sobre las articulaciones del dedo + pulgar.
-MANUS_PINZA_ACTIVA  = bool(_p("MANUS_PINZA_ACTIVA", True))
-MANUS_PINZA_ON_DEG  = float(_p("MANUS_PINZA_ON_DEG", 7.0))   # por debajo: pinza al 100 %
-MANUS_PINZA_OFF_DEG = float(_p("MANUS_PINZA_OFF_DEG", 14.0))  # por encima: pinza al 0 %
-
-# Márgenes en los extremos de TU recorrido (v3): (m_ini, m_fin) = fracción de lo medido al
-# calibrar que ya cuenta como extremo, en el lado de la pose "mínima" y de la "máxima"
-# (flexión: abierta → puño; abducción: juntos → separados; pulgar: según su pose).
-# Claves: "flex", "abd", "pulgar" o el nombre de un actuador (p. ej. "indice_pip").
-_MARGEN_DEFECTO = {"flex": (0.10, 0.20), "abd": (0.10, 0.15), "pulgar": (0.10, 0.15)}
-MANUS_MARGEN = {**_MARGEN_DEFECTO, **dict(_p("MANUS_MARGEN", {}))}
+# Longitud de tu falange distal / media (para el PIP del robot, ver cabecera)
+MANUS_RATIO_DISTAL = float(_p("MANUS_RATIO_DISTAL", 0.8))
+# v5: "cierre" (tu puño = puño del robot, lineal) | "1:1" (tu ángulo = ángulo del robot)
+MANUS_MAPEO = str(_p("MANUS_MAPEO", "cierre"))
 
 # ── Índices dentro de UNA mano (0..19), orden de ErgonomicsDataType ──────────
 ERGO = {
@@ -140,140 +154,87 @@ NOMBRES = {1: "menique_abd", 2: "menique_mcp", 3: "menique_pip",
            10: "indice_abd", 11: "indice_mcp", 12: "indice_pip",
            13: "pulgar_cmc", 14: "pulgar_abd", 15: "pulgar_mcp", 16: "pulgar_ip"}
 
-# Fuentes de MANUS de cada actuador. El "pip" de la OrcaHand mueve la falange media Y la
-# distal de una pieza (FingerTipAssembly): se alimenta con PIP + DIP del guante.
+# Fuentes de MANUS de cada actuador. Con DOS fuentes (PIP, DIP) se usa la cuerda
+# PIP → yema (ver cabecera); con una, el ángulo tal cual.
 FUENTES = {
     1:  ["PINKY_SPREAD"],  2: ["PINKY_MCP"],  3: ["PINKY_PIP", "PINKY_DIP"],
     4:  ["RING_SPREAD"],   5: ["RING_MCP"],   6: ["RING_PIP", "RING_DIP"],
     7:  ["MIDDLE_SPREAD"], 8: ["MIDDLE_MCP"], 9: ["MIDDLE_PIP", "MIDDLE_DIP"],
     10: ["INDEX_SPREAD"], 11: ["INDEX_MCP"], 12: ["INDEX_PIP", "INDEX_DIP"],
-    13: ["THUMB_CMC_STRETCH"],   # oposición (barrido del pulgar hacia el meñique)
+    13: ["THUMB_CMC_STRETCH"],   # barrido del pulgar: hacia fuera ↔ hacia el meñique
     14: ["THUMB_CMC_SPREAD"],    # abducción palmar (pulgar fuera del plano de la palma)
     15: ["THUMB_MCP"],
     16: ["THUMB_IP"],
 }
 
-# ── Rangos del ROBOT (rad) en las poses de calibración ───────────────────────
-# (r_min, r_max) de cada actuador: lo que debe hacer la OrcaHand cuando TÚ estás en el
-# mínimo / máximo de esa articulación. Se puede sobrescribir en config.MANUS_RANGO_ROBOT.
+# ── Robot en tu pose de referencia ("abierta": dedos estirados y juntos) ─────
 # Sentidos de la OrcaHand (comprobados con la cinemática del MJCF orcahand_right_body.xml):
-#   · abd de los 4 dedos: + = la yema se desplaza HACIA EL PULGAR (radial). Índice + = se
-#     abre; anular/meñique + = se cierran hacia el corazón.
-#   · t-abd: + = el pulgar se tumba en el plano de la palma (extensión radial);
-#            − = el pulgar sale perpendicular a la palma (abducción palmar).
-#   · t-cmc: + = el pulgar barre hacia la base del meñique (oposición); − = hacia fuera.
-_RANGO_ROBOT_DEFECTO = {
-    # flexión: dedo RECTO → puño con la YEMA TOCANDO LA PALMA. Medido con la cinemática y
-    # las mallas del MJCF: con mcp/pip a 0 los dedos quedan 3-8° doblados (rectos con mcp
-    # −4°/−3°/−3°/−8°), y con mcp 1.70 + pip 1.80 la yema ya toca la palma (0,1-0,3 mm).
-    2: (-0.14, 1.70), 3: (0.0, 1.80),      # meñique mcp, pip
-    5: (-0.05, 1.70), 6: (0.0, 1.80),      # anular
-    8: (-0.05, 1.70), 9: (0.0, 1.80),      # corazón
-    11: (-0.07, 1.70), 12: (0.0, 1.80),    # índice
-    # abducción: dedos JUNTOS → SEPARADOS (los "juntos" son la convergencia de retargeting.py)
-    10: (-0.27, 0.52),     # índice: pegado al corazón → abierto del todo (máx. del modelo 0.524)
-    4:  (0.225, -0.45),    # anular: pegado al corazón → abierto (mín. del modelo −0.471)
-    1:  (0.42, -0.50),     # meñique: pegado al anular → abierto (mín. del modelo −0.524)
-    7:  (-0.40, 0.40),     # corazón: inclinado hacia el anular → hacia el índice (±0.471)
-    # pulgar: rango completo del modelo
-    14: (0.96, -0.31),     # CMC_SPREAD: pulgar en el plano de la palma → perpendicular a ella
-    13: (-0.785, 0.576),   # CMC_STRETCH: pulgar extendido hacia fuera → cruzado hacia el meñique
-    15: (0.0, 1.745),      # MCP: recto → flexionado del todo
-    16: (0.0, 1.867),      # IP: recto → flexionado del todo
+#   · flexiones: + = cerrar.  · abd de los 4 dedos: + = la yema va HACIA EL PULGAR.
+#   · t-abd: + = pulgar tumbado en el plano de la palma; − = perpendicular a ella.
+#   · t-cmc: + = pulgar barre hacia la base del meñique; − = hacia fuera.
+_ROBOT_REF_DEFECTO = {
+    # dedos RECTOS (en el MJCF, a 0° quedan 3-8° doblados; rectos con estos mcp)
+    2: -0.14, 5: -0.05, 8: -0.05, 11: -0.07,
+    3: 0.0, 6: 0.0, 9: 0.0, 12: 0.0,
+    # dedos JUNTOS (convergencia de retargeting.py; corazón recto)
+    1: 0.42, 4: 0.225, 7: 0.0, 10: -0.27,
+    # pulgar: MCP/IP rectos. CMC: solo sin calibración del pulgar (con ella, ANCLAS_PULGAR)
+    15: 0.0, 16: 0.0, 13: -0.60, 14: 0.42,
 }
-RANGO_ROBOT = {int(k): (float(v[0]), float(v[1]))
-               for k, v in {**_RANGO_ROBOT_DEFECTO, **dict(_p("MANUS_RANGO_ROBOT", {}))}.items()}
+ROBOT_REF = {int(k): float(v) for k, v in
+             {**_ROBOT_REF_DEFECTO, **dict(_p("MANUS_ROBOT_REF", {}))}.items()}
 
-# Rangos HUMANOS típicos (grados) por si no hay calibración. Orientativos: calibra.
-_RANGO_HUMANO_DEFECTO = {
-    2: (0.0, 90.0), 3: (0.0, 120.0), 5: (0.0, 90.0), 6: (0.0, 120.0),
-    8: (0.0, 90.0), 9: (0.0, 120.0), 11: (0.0, 90.0), 12: (0.0, 120.0),
-    10: (-5.0, 20.0), 4: (0.0, -15.0), 1: (-5.0, -25.0), 7: (-20.0, 20.0),
-    14: (5.0, 50.0), 13: (0.0, 55.0), 15: (0.0, 55.0), 16: (0.0, 75.0),
+# Sentido de cada canal de MANUS respecto al robot, si la calibración no lo puede medir.
+# (Medido con tu guante el 13-oct: flexiones y abducciones van como el robot; los dos
+#  canales del CMC del pulgar, al revés.)
+SIGNO_DEFECTO = {**{k: 1.0 for k in range(1, 13)}, 13: -1.0, 14: -1.0, 15: 1.0, 16: 1.0}
+
+# Robot en tus poses del pulgar: SOLO para ajustar el desfase del CMC (ver cabecera).
+_ANCLAS_PULGAR_DEFECTO = {
+    13: {"fuera": -0.785, "perp": -0.16, "cruz": 0.576},
+    14: {"fuera": 0.96,   "perp": -0.31, "cruz": -0.31},
 }
+ANCLAS_PULGAR = {int(k): {str(p): float(r) for p, r in dict(v).items()}
+                 for k, v in {**_ANCLAS_PULGAR_DEFECTO,
+                              **dict(_p("MANUS_ANCLAS_PULGAR", {}))}.items()}
 
-# Poses INTERMEDIAS (v3): además de en los dos extremos, el actuador pasa EXACTAMENTE por
-# este valor del robot (rad) cuando repites esa pose de la calibración (calibrar_manus.py
-# guarda tu ángulo en ella). Sobrescribible: config.MANUS_ROBOT_INTERMEDIO = {k: {pose: rad}}.
-# Valores medidos con la cinemática y las mallas del MJCF:
-#   ·  7 corazón: "abierta" → 0 (recto: ni hacia el índice ni hacia el anular).
-#   · 13 t-cmc:   "pulgar_perp" → −0.16 (−9°): con t-abd −18° es lo MÁS LEJOS de la palma
-#                 que llega la yema del pulgar (112 mm por delante de la palma).
-#   · 14 t-abd:   "pulgar_perp" → −0.31 (perpendicular; solo cuando t-abd sale de
-#                 CMC_STRETCH, plano → cruzado: entonces "perp" queda en medio).
-#   · 15 t-mcp:   "pulgar_cruz" → 1.40 (80°): con t-cmc +33° y t-abd −18…−6° la YEMA queda
-#                 APOYADA en la palma, a la altura del anular. Con el MCP recto se queda a
-#                 ~9 cm de ella.
-_ROBOT_INTERMEDIO_DEFECTO = {
-    7:  {"abierta": 0.0},
-    13: {"pulgar_perp": -0.16},
-    14: {"pulgar_perp": -0.31},
-    15: {"pulgar_cruz": 1.40},
+# v5 "cierre": robot cuando TÚ cierras del todo (puño; pulgar doblado al máximo). Por defecto
+# el máximo de config.MANUS_RANGO_ROBOT (el mismo que usa orca_hardware para el tope real):
+# mcp 1.70 + pip 1.80 = yema apoyada en la palma (medido con las mallas del MJCF).
+_CIERRE_DEFECTO = {2: 1.70, 3: 1.80, 5: 1.70, 6: 1.80, 8: 1.70, 9: 1.80, 11: 1.70, 12: 1.80,
+                   15: 1.745, 16: 1.867}
+ROBOT_CIERRE = {k: float(max(dict(_p("MANUS_RANGO_ROBOT", {})).get(k, (v, v))))
+                for k, v in _CIERRE_DEFECTO.items()}
+# Pose de calibración que es "cerrado del todo" para cada uno
+POSE_CIERRE = {**{k: "puno" for k in (2, 3, 5, 6, 8, 9, 11, 12)}, 15: "pulgar_flex", 16: "pulgar_flex"}
+# MCP del pulgar del robot con TU pulgar cruzado sobre la palma (yema apoyada en la palma)
+MCP_PULGAR_CRUZADO = float(_p("MANUS_MCP_PULGAR_CRUZADO", 1.40))
+MIN_CIERRE_DEG = 15.0          # tu cierre medido menor que esto → esa articulación va 1:1
+GANANCIA_MAX = 3.0             # ganancia calibrada fuera de [1/GANANCIA_MAX, GANANCIA_MAX] → aviso
+
+# Calibración: de qué par de poses sale el SIGNO de cada actuador, y hacia dónde va el
+# robot entre ellas (+1 / −1). "fuera"/"cruz" = las poses que elija poses_barrido_pulgar.
+PAR_SIGNO = {
+    **{k: ("abierta", "puno", 1.0) for k in (2, 3, 5, 6, 8, 9, 11, 12)},
+    10: ("abierta", "separados", 1.0),          # índice se separa hacia el pulgar
+    4:  ("abierta", "separados", -1.0),         # anular se separa hacia el meñique
+    1:  ("abierta", "separados", -1.0),         # meñique, igual
+    7:  ("corazon_anular", "corazon_indice", 1.0),
+    13: ("fuera", "cruz", 1.0),                 # t-cmc sube al cruzar hacia el meñique
+    14: ("fuera", "pulgar_perp", -1.0),         # t-abd baja al ponerlo perpendicular
+    15: ("abierta", "pulgar_flex", 1.0),
+    16: ("abierta", "pulgar_flex", 1.0),
 }
-ROBOT_INTERMEDIO = {int(k): {str(p): float(r) for p, r in dict(v).items()}
-                    for k, v in {**_ROBOT_INTERMEDIO_DEFECTO,
-                                 **dict(_p("MANUS_ROBOT_INTERMEDIO", {}))}.items()}
-# Sin calibración: tu ángulo (grados) en esas poses (solo el corazón: recto = 0°)
-_INTERMEDIO_HUMANO_DEFECTO = {7: {"abierta": 0.0}}
+MIN_RECORRIDO_SIGNO_DEG = 4.0      # por debajo, el signo medido no es fiable → SIGNO_DEFECTO
 
-# Qué articulaciones del guante definen cada pinza (índices ERGO): pulgar + dedo(s).
-_ERGO_DEDO = {"indice": (4, 5, 6, 7), "corazon": (8, 9, 10, 11),
-              "anular": (12, 13, 14, 15), "menique": (16, 17, 18, 19)}
-_ERGO_PULGAR = (0, 1, 2, 3)
-PINZA_ERGO = {
-    "indice":         _ERGO_PULGAR + _ERGO_DEDO["indice"],
-    "corazon":        _ERGO_PULGAR + _ERGO_DEDO["corazon"],
-    "anular":         _ERGO_PULGAR + _ERGO_DEDO["anular"],
-    "menique":        _ERGO_PULGAR + _ERGO_DEDO["menique"],
-    "corazon_anular": _ERGO_PULGAR + _ERGO_DEDO["corazon"] + _ERGO_DEDO["anular"],
-    "indice_corazon": _ERGO_PULGAR + _ERGO_DEDO["indice"] + _ERGO_DEDO["corazon"],
-    "anular_menique": _ERGO_PULGAR + _ERGO_DEDO["anular"] + _ERGO_DEDO["menique"],
-}
-# Peso de cada canal en la distancia (los spreads son ruidosos y pesan menos)
-_PESO_ERGO = np.array([0.7, 1.0, 1.0, 1.0] + [0.5, 1.0, 1.0, 0.7] * 4)
+# Barrido del pulgar: poses candidatas para "fuera" (L plana) y "dentro" (cruzado), por
+# orden de preferencia (13-oct: "pulgar_plano" salió igual que "pulgar_cruz").
+POSES_FUERA = ("pulgar_plano", "separados", "abierta")
+POSES_DENTRO = ("pulgar_cruz", "pinza_menique", "pinza_anular_menique")
+MIN_BARRIDO_PULGAR_DEG = 15.0
 
-
-def _margen(k):
-    """(m_ini, m_fin) del actuador k: por nombre, si no por tipo (flex / abd / pulgar)."""
-    nombre = NOMBRES.get(k, "")
-    tipo = "pulgar" if k >= 13 else ("abd" if nombre.endswith("abd") else "flex")
-    m = MANUS_MARGEN.get(nombre, MANUS_MARGEN.get(tipo, (0.0, 0.0)))
-    return min(max(float(m[0]), 0.0), 0.45), min(max(float(m[1]), 0.0), 0.45)
-
-
-_CURVAS = {}     # caché de nudos por actuador (se llama cientos de veces por segundo)
-
-
-def _nudos(k, r0, r1, intermedios=()):
-    """Curva del actuador k como nudos ((u, ctrl), ...), con u = fracción de TU recorrido
-    (0 = tu mínimo, 1 = tu máximo): los extremos (u = m_ini → r_min, u = 1 − m_fin → r_max)
-    se meten hacia dentro con los márgenes, y en medio van las poses intermedias."""
-    clave = (k, r0, r1, intermedios)
-    c = _CURVAS.get(clave)
-    if c is None:
-        m0, m1 = _margen(k)
-        medio = []
-        for u, r in sorted((float(u), float(r)) for u, r in intermedios):
-            if 0.02 < u < 0.98 and (not medio or u - medio[-1][0] > 0.01):
-                medio.append((u, r))
-        if medio:        # el margen nunca se come una pose intermedia
-            m0 = min(m0, 0.5 * medio[0][0])
-            m1 = min(m1, 0.5 * (1.0 - medio[-1][0]))
-        c = ((m0, float(r0)),) + tuple(medio) + ((1.0 - m1, float(r1)),)
-        _CURVAS[clave] = c
-    return c
-
-
-def _evaluar(u, nudos):
-    """Lineal por tramos por los nudos; fuera de ellos, el valor del extremo (satura)."""
-    if u <= nudos[0][0]:
-        return nudos[0][1]
-    for i in range(1, len(nudos)):
-        ub, rb = nudos[i]
-        if u <= ub:
-            ua, ra = nudos[i - 1]
-            return ra + (u - ua) * (rb - ra) / (ub - ua)
-    return nudos[-1][1]
+# Ceros típicos (grados) si no hay calibración: tu mano abierta ≈ 0, salvo el CMC
+_CERO_DEFECTO = {"THUMB_CMC_SPREAD": 10.0, "THUMB_CMC_STRETCH": 38.0}
 
 # Yemas de la OrcaHand (mismos bodies que retargeting.py), en el orden del SDK:
 # pulgar, índice, corazón, anular, meñique
@@ -294,151 +255,286 @@ def _importar_sdk():
     return lib, ffi, ManusSDK, SDKReturnCode, AxisView, AxisPolarity, Side
 
 
-def _poses_pinza_robot():
-    """PINZA_CTRL_CONTACTO de retargeting.py (poses de contacto medidas en el visor)."""
-    try:
-        from skill_shield.mano.retargeting import PINZA_CTRL_CONTACTO
-        return {n: {int(k): float(v) for k, v in d.items()} for n, d in PINZA_CTRL_CONTACTO.items()}
-    except Exception:
-        return {}
+# ══════════════════════════════════════════════════════════════════════════════
+# MAPEO 1:1
+# ══════════════════════════════════════════════════════════════════════════════
+def ganancia(k):
+    return float(MANUS_GANANCIA.get(NOMBRES.get(k, ""), 1.0))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MAPEO
-# ══════════════════════════════════════════════════════════════════════════════
-def _resolver_intermedios(k, por_pose, h0, h1):
-    """{pose: tu ángulo (grados)} → ((u, ctrl del robot), ...) de las poses intermedias
-    que el robot conoce (ROBOT_INTERMEDIO). u = fracción de tu recorrido h0 → h1."""
-    if abs(h1 - h0) < 1e-6:
-        return ()
-    out = []
-    for pose, h in dict(por_pose or {}).items():
-        r = ROBOT_INTERMEDIO.get(k, {}).get(pose)
-        if r is not None:
-            out.append(((float(h) - h0) / (h1 - h0), float(r)))
-    return tuple(sorted(out))
+def angulo_relativo(ang_deg, fuentes, cero):
+    """Tu ángulo para un actuador, en GRADOS, desde la pose de referencia (cero).
+    Una fuente: θ − cero. Dos (PIP, DIP): ángulo de la cuerda PIP → yema (ver cabecera)."""
+    if len(fuentes) == 1:
+        return float(ang_deg[ERGO[fuentes[0]]]) - float(cero[0])
+    p = math.radians(float(ang_deg[ERGO[fuentes[0]]]) - float(cero[0]))
+    d = math.radians(float(ang_deg[ERGO[fuentes[1]]]) - float(cero[1]))
+    r = MANUS_RATIO_DISTAL
+    return math.degrees(math.atan2(math.sin(p) + r * math.sin(p + d),
+                                   math.cos(p) + r * math.cos(p + d)))
 
 
 def mapeo_por_defecto():
-    """{ctrl: (fuentes, (h_min, h_max) grados, (r_min, r_max) rad, intermedios)} sin
-    calibrar. intermedios = ((u, ctrl), ...) (ver ROBOT_INTERMEDIO)."""
-    out = {}
-    for k in FUENTES:
-        h0, h1 = _RANGO_HUMANO_DEFECTO[k]
-        out[k] = (list(FUENTES[k]), (h0, h1), RANGO_ROBOT[k],
-                  _resolver_intermedios(k, _INTERMEDIO_HUMANO_DEFECTO.get(k), h0, h1))
-    return out
+    """{ctrl: {"fuentes", "cero" (grados), "signo", "q_ref" (rad)}} sin calibrar."""
+    return {k: {"fuentes": list(f), "cero": [_CERO_DEFECTO.get(x, 0.0) for x in f],
+                "signo": SIGNO_DEFECTO[k], "q_ref": ROBOT_REF[k]}
+            for k, f in FUENTES.items()}
 
 
-def _sin_calibrar(entrada, k):
-    """¿Esta entrada del mapeo es la de por defecto (la calibración no pudo medirla)?"""
-    h0, h1 = entrada[1]
-    d0, d1 = _RANGO_HUMANO_DEFECTO[k]
-    return list(entrada[0]) == list(FUENTES[k]) and abs(h0 - d0) < 1e-6 and abs(h1 - d1) < 1e-6
+def poses_barrido_pulgar(medidas):
+    """(pose_fuera, pose_dentro, nota) del barrido del pulgar (CMC_STRETCH), o
+    (None, None, nota) si ningún par tiene recorrido. Prefiere pulgar_plano → pulgar_cruz;
+    si una de las dos está mal hecha, usa separados/abierta o la pinza del meñique."""
+    i_st = ERGO["THUMB_CMC_STRETCH"]
+    for dentro in POSES_DENTRO:
+        if dentro not in medidas:
+            continue
+        for fuera in POSES_FUERA:
+            if fuera not in medidas:
+                continue
+            d = abs(medidas[dentro][i_st] - medidas[fuera][i_st])
+            if d >= MIN_BARRIDO_PULGAR_DEG:
+                nota = ""
+                if (fuera, dentro) != ("pulgar_plano", "pulgar_cruz"):
+                    nota = (f"'pulgar_plano' → 'pulgar_cruz' no tiene recorrido: uso '{fuera}' → "
+                            f"'{dentro}' ({d:.0f}° de CMC_STRETCH)")
+                return fuera, dentro, nota
+    return None, None, (f"ningún par de poses del pulgar cambia ≥ {MIN_BARRIDO_PULGAR_DEG:.0f}° "
+                        f"de CMC_STRETCH")
 
 
-def _t_abd_por_barrido(mapeo, d=None):
-    """t-abd (14) sin calibrar pero con el barrido del pulgar (13, CMC_STRETCH) calibrado:
-    t-abd sigue a ese barrido — plano (tumbado en la palma) → perpendicular a mitad de
-    camino (o donde midió la calibración tu pose "perpendicular") → perpendicular también
-    al cruzarlo hacia el meñique (así es como apoya el pulgar en la palma). Es lo que pasa
-    con la calibración del 8-oct: CMC_SPREAD no cambió > 4° entre "plano" y
-    "perpendicular" y t-abd se quedaba atascado entre −2° y +11°."""
-    e13 = mapeo.get(13)
-    if e13 is None or list(e13[0]) != ["THUMB_CMC_STRETCH"] or _sin_calibrar(e13, 13):
-        return False
-    h0, h1 = e13[1]
-    u_perp = 0.5
-    v13 = (d or {}).get("mapeo", {}).get("13", {})
-    h_perp = dict(v13.get("intermedios") or {}).get("pulgar_perp")
-    if h_perp is not None and abs(h1 - h0) > 1e-6 and 0.1 < (h_perp - h0) / (h1 - h0) < 0.9:
-        u_perp = (h_perp - h0) / (h1 - h0)
-    r_perp = ROBOT_INTERMEDIO.get(14, {}).get("pulgar_perp", RANGO_ROBOT[14][1])
-    mapeo[14] = (["THUMB_CMC_STRETCH"], (h0, h1), RANGO_ROBOT[14], ((float(u_perp), r_perp),))
-    return True
+def construir_mapeo(medidas, modo=None):
+    """medidas: {pose: array(20) grados} → (mapeo {ctrl: {...}}, informe {ctrl: texto}).
+    modo: "cierre" | "1:1" (None = config.MANUS_MAPEO). Lo usan calibrar_manus.py y
+    cargar_calibracion (que lo rehace con las poses crudas guardadas)."""
+    modo = modo or MANUS_MAPEO
+    medidas = {p: np.asarray(a, dtype=float) for p, a in medidas.items()}
+    mapeo, informe = mapeo_por_defecto(), {}
+    if "abierta" not in medidas:
+        return mapeo, {k: "⚠️  sin la pose 'abierta': ceros típicos" for k in FUENTES}
+    fuera, dentro, nota_barrido = poses_barrido_pulgar(medidas)
+    alias = {"fuera": fuera, "cruz": dentro}
+    for k, fuentes in FUENTES.items():
+        cero = [float(medidas["abierta"][ERGO[f]]) for f in fuentes]
+        notas = []
+        # ── signo: de tus poses; si no hay recorrido, el habitual ──
+        pa, pb, dir_robot = PAR_SIGNO[k]
+        pa, pb = alias.get(pa, pa), alias.get(pb, pb)
+        signo = SIGNO_DEFECTO[k]
+        if pa in medidas and pb in medidas:
+            d = (angulo_relativo(medidas[pb], fuentes, cero)
+                 - angulo_relativo(medidas[pa], fuentes, cero))
+            if abs(d) >= MIN_RECORRIDO_SIGNO_DEG:
+                medido = float(np.sign(d) * dir_robot)
+                if medido != signo:
+                    notas.append(f"⚠️  sentido AL REVÉS que lo habitual ('{pa}' → '{pb}': {d:+.0f}°): "
+                                 f"uso tu medida")
+                signo = medido
+            else:
+                notas.append(f"'{pa}' → '{pb}' solo cambia {d:+.1f}°: sentido habitual")
+        else:
+            notas.append(f"faltan '{pa}'/'{pb}': sentido habitual")
+        # ── referencia del robot: la de la mano abierta; CMC del pulgar, por anclas ──
+        q_ref = ROBOT_REF[k]
+        if k in ANCLAS_PULGAR:
+            g = ganancia(k)
+            usadas = []
+            for clave, r in ANCLAS_PULGAR[k].items():
+                pose = alias.get(clave, "pulgar_perp" if clave == "perp" else clave)
+                if pose in medidas:
+                    th = math.radians(angulo_relativo(medidas[pose], fuentes, cero))
+                    usadas.append((pose, r - signo * g * th))
+            if usadas:
+                q_ref = float(np.mean([c for _, c in usadas]))
+                disp = max(abs(c - q_ref) for _, c in usadas)
+                notas.append(f"reposo ajustado con {', '.join(p for p, _ in usadas)} "
+                             f"(error máx. de las anclas {math.degrees(disp):.0f}° con ganancia {g:.2f})")
+                # Diagnóstico (NO se aplica): qué ganancia encajaría mejor tus poses del pulgar.
+                # Si es muy distinta de 1, el guante mide ese eje con otra escala que el robot.
+                th = np.array([math.radians(angulo_relativo(medidas[p], fuentes, cero))
+                               for p, _ in usadas])
+                rr = np.array([ANCLAS_PULGAR[k][c] for c in ANCLAS_PULGAR[k]
+                               if alias.get(c, "pulgar_perp" if c == "perp" else c) in medidas])
+                if len(th) >= 2 and np.ptp(th) > math.radians(MIN_RECORRIDO_SIGNO_DEG):
+                    pend = float(np.polyfit(th, rr, 1)[0])
+                    g_fit = pend / signo
+                    res = rr - np.polyval(np.polyfit(th, rr, 1), th)
+                    if g_fit > 0 and abs(g_fit - g) > 0.25:
+                        notas.append(f"ℹ️  el guante mide este eje con otra escala que el robot: con "
+                                     f"ganancia {g_fit:.1f} tus poses del pulgar encajarían a "
+                                     f"±{math.degrees(float(np.abs(res).max())):.0f}° "
+                                     f"(MANUS_GANANCIA['{NOMBRES[k]}'] = {g_fit:.1f} y --recalcular)")
+            else:
+                notas.append("⚠️  sin poses del pulgar: reposo típico")
+            if k == 13 and nota_barrido:
+                notas.append(nota_barrido)
+        mapeo[k] = {"fuentes": list(fuentes), "cero": cero, "signo": signo, "q_ref": float(q_ref)}
+        informe[k] = (f"{' ⟶ '.join(fuentes) if len(fuentes) > 1 else fuentes[0]}: "
+                      f"cero {', '.join(f'{c:+.1f}°' for c in cero)} · sentido "
+                      f"{'+' if signo > 0 else '−'} · mano abierta → robot {q_ref:+.2f} rad"
+                      + "".join(f"\n{'':20s}· {n}" for n in notas))
+    if modo == "cierre":
+        _aplicar_cierre(mapeo, informe, medidas, fuera, dentro)
+    return mapeo, informe
 
 
-def mapeo_desde_json(d):
-    """Contenido de manus_calibracion.json (versión ≥ 2) → mapeo. Lo del ROBOT (extremos y
-    poses intermedias) sale SIEMPRE de config (RANGO_ROBOT / ROBOT_INTERMEDIO), así que se
-    puede cambiar sin recalibrar; del JSON solo se usan TUS ángulos."""
+# ══════════════════════════════════════════════════════════════════════════════
+# v5 — MODO "cierre": tu puño = puño del robot (rectas por dos poses tuyas)
+# ══════════════════════════════════════════════════════════════════════════════
+def _delta(medidas, pose, fuente):
+    """Tu ángulo de UNA fuente en esa pose, desde la mano abierta (grados)."""
+    return float(medidas[pose][ERGO[fuente]] - medidas["abierta"][ERGO[fuente]])
+
+
+def _aplicar_cierre(mapeo, informe, medidas, fuera, dentro):
+    """Convierte las flexiones y el pulgar del mapeo 1:1 al modo "cierre" (ver cabecera).
+    Lo que no se pueda calibrar (pose ausente o sin recorrido) se queda en 1:1 y se avisa."""
+    nota = lambda k, txt: informe.__setitem__(k, informe[k] + f"\n{'':20s}· {txt}")
+
+    # ── 1) Flexiones: recta abierta → recto, puño (o pulgar doblado) → cerrado ──
+    for k, pose in POSE_CIERRE.items():
+        v = mapeo[k]
+        if pose not in medidas:
+            nota(k, f"CIERRE: falta la pose '{pose}' → 1:1")
+            continue
+        th = v["signo"] * angulo_relativo(medidas[pose], v["fuentes"], v["cero"])
+        if th < MIN_CIERRE_DEG:
+            nota(k, f"CIERRE: en '{pose}' solo cierras {th:.0f}° → 1:1")
+            continue
+        g = (ROBOT_CIERRE[k] - v["q_ref"]) / math.radians(th)
+        if not (1.0 / GANANCIA_MAX <= g <= GANANCIA_MAX):
+            nota(k, f"⚠️  CIERRE: ganancia {g:.2f} fuera de lo razonable (¿pose '{pose}' mal hecha?): "
+                    f"la limito")
+            g = min(max(g, 1.0 / GANANCIA_MAX), GANANCIA_MAX)
+        v["ganancia"] = float(g)
+        nota(k, f"CIERRE: tu '{pose}' ({th:.0f}°) → robot {math.degrees(ROBOT_CIERRE[k]):.0f}° "
+                f"(×{g:.2f} sobre el 1:1)")
+
+    # ── 2) CMC del pulgar: lineal en (SPREAD, STRETCH), exacta por fuera/perp/cruz ──
+    cero_sp = float(medidas["abierta"][ERGO["THUMB_CMC_SPREAD"]])
+    cero_st = float(medidas["abierta"][ERGO["THUMB_CMC_STRETCH"]])
+    poses = {"fuera": fuera, "perp": "pulgar_perp", "cruz": dentro}
+    cmc_ok = False
+    if all(p is not None and p in medidas for p in poses.values()):
+        X = np.array([[1.0, _delta(medidas, poses[c], "THUMB_CMC_SPREAD"),
+                       _delta(medidas, poses[c], "THUMB_CMC_STRETCH")] for c in ("fuera", "perp", "cruz")])
+        area = abs(np.linalg.det(X[1:, 1:] - X[0, 1:])) / 2.0      # triángulo de tus 3 poses (grados²)
+        if area >= 150.0:
+            cmc_ok = True
+            for k in (13, 14):
+                r = np.array([ANCLAS_PULGAR[k][c] for c in ("fuera", "perp", "cruz")])
+                q0, a_sp, a_st = np.linalg.solve(X, r)
+                mapeo[k] = {"tipo": "afin", "q_ref": float(q0),
+                            "fuentes": ["THUMB_CMC_SPREAD", "THUMB_CMC_STRETCH"],
+                            "terminos": [{"partes": [["THUMB_CMC_SPREAD", cero_sp, float(a_sp)],
+                                                     ["THUMB_CMC_STRETCH", cero_st, float(a_st)]],
+                                          "coef": 1.0}]}
+                informe[k] = (f"THUMB_CMC_SPREAD + THUMB_CMC_STRETCH (lineal): exacta en "
+                              f"'{poses['fuera']}', 'pulgar_perp' y '{poses['cruz']}' → mano abierta = "
+                              f"robot {math.degrees(q0):+.0f}°")
+        else:
+            for k in (13, 14):
+                nota(k, f"CIERRE: tus 3 poses del pulgar casi no se distinguen ({area:.0f} grados²) → 1:1")
+    else:
+        for k in (13, 14):
+            nota(k, "CIERRE: faltan poses del pulgar → 1:1")
+
+    # ── 3) MCP del pulgar: tu MCP + cuánto pasa el pulgar del robot de la perpendicular
+    #       hacia el meñique (solo al CRUZAR: con el pulgar abierto, perpendicular o en el
+    #       puño, por fuera de los dedos, no influye) ──
+    v = mapeo[15]
+    if cmc_ok and "pulgar_flex" in medidas and v.get("ganancia"):
+        t13 = mapeo[13]["terminos"][0]["partes"]
+        q13 = lambda pose: mapeo[13]["q_ref"] + sum(c * _delta(medidas, pose, f) for f, _, c in t13)
+        umbral = q13("pulgar_perp") - mapeo[13]["q_ref"]          # (sobre el reposo, rad)
+        x_f = max(0.0, q13("pulgar_flex") - mapeo[13]["q_ref"] - umbral)
+        x_c = max(0.0, q13(dentro) - mapeo[13]["q_ref"] - umbral)
+        v1f = v["signo"] * _delta(medidas, "pulgar_flex", "THUMB_MCP")
+        v1c = v["signo"] * _delta(medidas, dentro, "THUMB_MCP")
+        A = np.array([[v1f, x_f], [v1c, x_c]])
+        b = np.array([ROBOT_CIERRE[15] - v["q_ref"], MCP_PULGAR_CRUZADO - v["q_ref"]])
+        if x_c > math.radians(MIN_CIERRE_DEG) and abs(np.linalg.det(A)) > 1.0:
+            a1, a2 = np.linalg.solve(A, b)
+            if a1 > 0 and a2 > 0:
+                mapeo[15] = {"tipo": "afin", "q_ref": v["q_ref"], "fuentes": ["THUMB_MCP"] + [f for f, _, _ in t13],
+                             "terminos": [
+                                 {"partes": [["THUMB_MCP", v["cero"][0], float(a1 * v["signo"])]], "coef": 1.0},
+                                 {"partes": [[f, c0, c] for f, c0, c in t13], "coef": float(a2),
+                                  "bisagra": 1.0, "umbral": float(umbral)}]}
+                nota(15, f"CIERRE: + al CRUZAR el pulgar: cuando el pulgar del robot pasa de la "
+                         f"perpendicular hacia el meñique, su MCP se dobla hasta "
+                         f"{math.degrees(MCP_PULGAR_CRUZADO):.0f}° en '{dentro}' (yema en la palma)")
+            else:
+                nota(15, "CIERRE: el término de cruce no sale coherente → solo tu MCP")
+        else:
+            nota(15, "CIERRE: sin recorrido de cruce del pulgar → solo tu MCP")
+
+
+def _mapeo_desde_v4(d):
     mapeo = mapeo_por_defecto()
     for k, v in d.get("mapeo", {}).items():
         k = int(k)
-        if k not in FUENTES:
-            continue
-        if not v.get("fuentes") and FUENTES.get(k):
-            continue            # calibración anterior a esa fuente (corazón, v2): por defecto
-        h0, h1 = float(v["humano"][0]), float(v["humano"][1])
-        robot = RANGO_ROBOT.get(k, (float(v["robot"][0]), float(v["robot"][1])))
-        mapeo[k] = (list(v["fuentes"]), (h0, h1), robot,
-                    _resolver_intermedios(k, v.get("intermedios"), h0, h1))
-    if _sin_calibrar(mapeo[14], 14):
-        _t_abd_por_barrido(mapeo, d)
+        if k in FUENTES:
+            mapeo[k] = dict(v)
     return mapeo
 
 
 def cargar_calibracion(ruta=MANUS_CALIBRACION, verbose=True):
-    """Devuelve (mapeo, pinzas). pinzas = {nombre: array(20) grados} grabadas al calibrar."""
-    mapeo, pinzas = mapeo_por_defecto(), {}
+    """Devuelve el mapeo {ctrl: {...}} en el modo de config.MANUS_MAPEO. Con "poses_crudas"
+    (calibraciones v3, v4 o v5) se REHACE al cargar: lo del robot sale siempre de config.
+    Sin ellas, se usa el mapeo guardado (v4)."""
+    mapeo = mapeo_por_defecto()
     if ruta and os.path.exists(ruta):
         try:
             with open(ruta, encoding="utf-8") as fh:
                 d = json.load(fh)
-            if int(d.get("version", 1)) < 2:
-                print(f"⚠️  [MANUS] {os.path.basename(ruta)} es de la calibración ANTIGUA "
-                      f"(regresión): se ignora. Ejecuta  python calibrar_manus.py")
-            else:
-                mapeo = mapeo_desde_json(d)
-                for n, ang in d.get("pinzas", {}).items():
-                    pinzas[n] = np.asarray(ang, dtype=float)
+            version = int(d.get("version", 1))
+            if d.get("poses_crudas"):
+                mapeo, _ = construir_mapeo(d["poses_crudas"])
                 if verbose:
                     print(f"🧤 [MANUS] Calibración cargada: {os.path.basename(ruta)} "
-                          f"({d.get('fecha', '?')}, {len(pinzas)} pinzas)")
-                    viejas = [NOMBRES[int(k)] for k, v in d.get("mapeo", {}).items()
-                              if int(k) in FUENTES and FUENTES[int(k)] and not v.get("fuentes")]
-                    if viejas or int(d.get("version", 2)) < 3:
-                        print("   ℹ️  Calibración anterior a la v3 (corazón fijo, pulgar sin "
-                              "poses intermedias): repite  python calibrar_manus.py  para "
-                              "aprovechar el recorrido completo.")
-                    if list(mapeo[14][0]) == ["THUMB_CMC_STRETCH"] and \
-                            not any(list(v.get("fuentes", [])) == ["THUMB_CMC_STRETCH"]
-                                    for k, v in d.get("mapeo", {}).items() if int(k) == 14):
-                        print("   ℹ️  t-abd (pulgar) no estaba calibrado: sigue al barrido del "
-                              "pulgar (plano → perpendicular → cruzado).")
+                          f"({d.get('fecha', '?')}) · modo '{MANUS_MAPEO}'"
+                          + ("  (es v3: sus pinzas y poses forzadas se ignoran)" if version < 4 else ""))
+            elif version >= 4:
+                mapeo = _mapeo_desde_v4(d)
+                if verbose:
+                    print(f"🧤 [MANUS] Calibración cargada: {os.path.basename(ruta)} "
+                          f"({d.get('fecha', '?')}) · mapeo guardado (sin poses crudas)")
+            elif verbose:
+                print(f"⚠️  [MANUS] {os.path.basename(ruta)} es antigua y no tiene poses crudas: "
+                      f"ceros típicos. Ejecuta  python calibrar_manus.py")
         except Exception as e:
-            print(f"⚠️  [MANUS] No se pudo leer {ruta} ({e}): uso la correspondencia por defecto.")
+            print(f"⚠️  [MANUS] No se pudo leer {ruta} ({e}): uso ceros típicos.")
     elif verbose:
-        print("⚠️  [MANUS] Sin calibración (manus_calibracion.json): rangos humanos típicos. "
-              "Ejecuta  python calibrar_manus.py  para que tu puño/abanico/pulgar lleguen al límite.")
-    return mapeo, pinzas
+        print("⚠️  [MANUS] Sin calibración (manus_calibracion.json): ceros típicos. "
+              "Ejecuta  python calibrar_manus.py  (2 min).")
+    return mapeo
 
 
 def angulos_a_ctrl(ang_deg, mapeo):
     """20 ángulos de UNA mano (GRADOS) → array N_ACT de ctrl (rad; ctrl[0] = NaN: la muñeca
-    no la da el guante). Recortado a LIMITES_CTRL."""
+    no la da el guante). Recortado a LIMITES_CTRL (los topes mecánicos del modelo).
+      · "lineal": q_ref + signo · ganancia_calibrada · MANUS_GANANCIA · (θ − cero)
+      · "afin":   q_ref + MANUS_GANANCIA · Σ coef · x,   x = Σ peso·(θ − cero) de sus partes
+                  (o max(0, x − umbral) si el término es de "bisagra": solo actúa a partir
+                  de ese punto, p. ej. el MCP del pulgar al cruzarlo)"""
     ang_deg = np.asarray(ang_deg, dtype=float)
     out = np.full(N_ACT, np.nan)
     for k, v in mapeo.items():
-        fuentes, (h0, h1), (r0, r1) = v[0], v[1], v[2]
+        if v.get("tipo") == "afin":
+            s = 0.0
+            for t in v["terminos"]:
+                x = sum(float(p) * (float(ang_deg[ERGO[f]]) - float(c0)) for f, c0, p in t["partes"])
+                if t.get("bisagra"):
+                    x = max(0.0, x - float(t.get("umbral", 0.0)))
+                s += float(t["coef"]) * x
+            q = v["q_ref"] + ganancia(k) * s
+        else:
+            th = math.radians(angulo_relativo(ang_deg, v["fuentes"], v["cero"]))
+            q = v["q_ref"] + v["signo"] * float(v.get("ganancia", 1.0)) * ganancia(k) * th
         lo, hi = LIMITES_CTRL[k]
-        if not fuentes or abs(h1 - h0) < 1e-6:
-            out[k] = min(max(r0, lo), hi)
-            continue
-        a = float(sum(ang_deg[ERGO[f]] for f in fuentes))
-        u = (a - h0) / (h1 - h0)                       # 0 = tu mínimo, 1 = tu máximo
-        u *= MANUS_GANANCIA.get(NOMBRES.get(k, ""), 1.0)
-        r = _evaluar(u, _nudos(k, r0, r1, tuple(v[3]) if len(v) > 3 else ()))
-        out[k] = min(max(r, lo), hi)
+        out[k] = min(max(q, lo), hi)
     return out
-
-
-def distancia_pinza(ang_deg, pose_deg, nombre):
-    """RMS ponderado (grados) entre tu mano y una pose de pinza grabada, solo sobre las
-    articulaciones del pulgar y del dedo (o dedos) de esa pinza."""
-    idx = list(PINZA_ERGO[nombre])
-    d = (np.asarray(ang_deg, dtype=float)[idx] - np.asarray(pose_deg, dtype=float)[idx]) * _PESO_ERGO[idx]
-    return float(np.sqrt(np.mean(d * d)))
 
 
 class GuanteManus:
@@ -449,16 +545,12 @@ class GuanteManus:
         self.lado = lado
         self.aplicar = False             # el bucle principal decide si el guante manda
         self.conectado = False
-        self.mapeo, self.pinzas = cargar_calibracion()
-        if tuple(LIMITES_CTRL[7]) == (0.0, 0.0) or tuple(RANGO_ROBOT[7]) == (0.0, 0.0) or \
-                tuple(LIMITES_CTRL[11])[0] >= 0.0:
+        self.mapeo = cargar_calibracion()
+        if tuple(LIMITES_CTRL[7]) == (0.0, 0.0) or tuple(LIMITES_CTRL[11])[0] >= 0.0:
             print("⚠️  [MANUS] config.py aún tiene los límites antiguos (corazón fijo, dedos sin "
                   "estirar del todo): pega el bloque de config_rango_completo.py al FINAL de config.py.")
-        self.pinzas_robot = _poses_pinza_robot()
-        # solo las pinzas que tienen pose del guante Y pose de contacto del robot
-        self.pinzas = {n: p for n, p in self.pinzas.items() if n in self.pinzas_robot}
-        self.pinza = None                # nombre de la pinza activa (o None) — para el HUD
-        self.pinza_peso = 0.0            # 0..1 cuánto manda la pose de contacto
+        self.pinza = None                # v4: ya no hay pinzas forzadas (se deja por el HUD)
+        self.pinza_peso = 0.0
         self._lock = threading.Lock()
         self._ang = None                 # 20 ángulos (grados) de nuestra mano
         self._t_ang = 0.0
@@ -593,36 +685,12 @@ class GuanteManus:
         _, edad = self.angulos()
         return edad <= MANUS_TIMEOUT_S
 
-    def _actualizar_pinza(self, ang):
-        """Pinza más cercana a tu mano (en grados RMS) con histéresis. Devuelve
-        (nombre | None, peso 0..1)."""
-        if not (MANUS_PINZA_ACTIVA and self.pinzas):
-            return None, 0.0
-        dist = {n: distancia_pinza(ang, p, n) for n, p in self.pinzas.items()}
-        on, off = MANUS_PINZA_ON_DEG, MANUS_PINZA_OFF_DEG
-        if self.pinza is not None and dist[self.pinza] <= off:
-            nombre = self.pinza                            # la activa se mantiene hasta OFF
-        else:
-            nombre = min(dist, key=dist.get)
-            if dist[nombre] > off:
-                return None, 0.0
-        peso = min(max((off - dist[nombre]) / max(off - on, 1e-6), 0.0), 1.0)
-        return nombre, peso
-
     def ctrl_objetivo(self):
-        """ctrl de la mano (N_ACT, NaN en la muñeca) según el guante, o None.
-        Incluye la mezcla con la pose de contacto si estás en una pinza calibrada."""
+        """ctrl de la mano (N_ACT, NaN en la muñeca) según el guante, 1:1, o None."""
         ang, edad = self.angulos()
         if ang is None or edad > MANUS_TIMEOUT_S:
             return None
-        obj = angulos_a_ctrl(ang, self.mapeo)
-        nombre, peso = self._actualizar_pinza(ang)
-        self.pinza, self.pinza_peso = nombre, peso
-        if nombre is not None and peso > 0.0:
-            for k, v in self.pinzas_robot[nombre].items():
-                lo, hi = LIMITES_CTRL[k]
-                obj[k] = (1.0 - peso) * obj[k] + peso * min(max(v, lo), hi)
-        return obj
+        return angulos_a_ctrl(ang, self.mapeo)
 
     def estado_txt(self):
         if self._sdk is None:
@@ -631,10 +699,7 @@ class GuanteManus:
             return "MANUS: conectando..."
         if not self.datos_frescos():
             return "MANUS: SIN DATOS (¿guante encendido?)"
-        txt = f"MANUS: OK {self.hz:3.0f} Hz" + ("" if self.aplicar else " (standby)")
-        if self.pinza is not None:
-            txt += f"  PINZA {self.pinza.replace('_', '+')} {100 * self.pinza_peso:3.0f} %"
-        return txt
+        return f"MANUS: OK {self.hz:3.0f} Hz {MANUS_MAPEO}" + ("" if self.aplicar else " (standby)")
 
     # ── escritura en la simulación (hilo de física, antes de cada mj_step) ────
     def escribir_ctrl(self, datos, dt):
