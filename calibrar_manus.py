@@ -9,6 +9,26 @@ Calibración guante MANUS → OrcaHand, IMITACIÓN 1:1  (manus_calibracion.json,
                                           # manus_calibracion.json (sin guante; guarda copia).
                                           # Sirve también para pasar una calibración v3 a 1:1.
 
+QUÉ HACE (v4, 15-oct)
+  El robot copia tus ángulos GRADO A GRADO (ver la cabecera de manus_guante.py):
+      q_robot = q_ref + signo · (tu ángulo − tu ángulo con la mano abierta)
+  La calibración ya NO estira tu recorrido al del robot, NO graba pinzas ni poses que
+  luego se fuercen. Solo mide:
+    · el CERO de cada sensor: tu mano ABIERTA = dedos rectos y juntos en el robot;
+    · el SENTIDO de cada canal del guante (con las demás poses: puño, abanico, pulgar...);
+    · el desfase del CMC del pulgar (sus ejes no son los tuyos): un número por
+      articulación, ajustado con tus 3 poses del pulgar.
+  Las pinzas de calibraciones anteriores se ignoran.
+
+v5 (15-oct) — MODO "cierre" (config.MANUS_MAPEO, por defecto): con el 1:1 puro los dedos
+  no tocaban la palma (proporciones de la OrcaHand: necesita ~97° de nudillo y tu puño son
+  71-84°). Ahora cada flexión es una RECTA por dos poses tuyas: mano abierta → robot recto,
+  PUÑO → robot con la yema en la palma; el pulgar cruzado → pulgar del robot apoyado en la
+  palma (ver la cabecera de manus_guante.py). Por eso en "cierre" el PUÑO y las 3 poses del
+  pulgar también son importantes: ciérralo como lo cerrarás al usarlo.
+  "1:1" sigue disponible (MANUS_MAPEO = "1:1"); el mapeo se rehace al arrancar con las poses
+  guardadas, así que cambiar de modo NO exige recalibrar.
+
 CONSEJOS: mantén cada pose quieta ~3 s. La pose ABIERTA es la importante (es el cero de
 todo): dedos estirados de verdad y juntos, pulgar estirado y relajado al lado del índice.
 En las tres del pulgar exagera la DIFERENCIA entre ellas; en "plano" el pulgar va ESTIRADO
@@ -166,7 +186,7 @@ def main():
     if "--recalcular" in sys.argv:
         return recalcular()
 
-    guante = GuanteManus()
+    guante = GuanteManus(tactil=False)
     if not guante.iniciar():
         return 1
     print("Esperando datos del guante...")

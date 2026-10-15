@@ -98,6 +98,28 @@ config.MANUS_MAPEO = "cierre" (por defecto) | "1:1":
   Lo del robot (extremos, anclas) sale SIEMPRE de config: si la calibración tiene
   "poses_crudas" el mapeo se rehace al cargar, así que cambiar MANUS_MAPEO,
   MANUS_RANGO_ROBOT o MANUS_ANCLAS_PULGAR no exige recalibrar.
+
+═══════════════════════════════════════════════════════════════════════════════
+v7 (15-oct) — HÁPTICA REAL: SENSORES DE LA ORCAHAND TOUCH FÍSICA → VIBRACIÓN DEL MANUS
+═══════════════════════════════════════════════════════════════════════════════
+config.MANUS_HAPTICA_FUENTE = "real" (por defecto) | "sim" | "auto":
+  · "real": cada dedo del guante vibra según la fuerza que mide la YEMA del mismo dedo de
+    la mano FÍSICA (sensores táctiles de la OrcaHand Touch). La simulación no interviene.
+    Los sensores los lee puente_tactil.py en un proceso aparte (con el orca_core nuevo, ver
+    su cabecera); GuanteManus lo lanza solo y recibe las fuerzas por UDP local
+    (skill_shield/hardware/tactil_real.py). Sin sensores → el guante no vibra.
+  · "sim": como en v6, contactos de la mano SIMULADA (clase SensorTactil).
+  · "auto": real si llegan datos de los sensores; si no, la simulación.
+Curva (por dedo): nada por debajo de MANUS_TACTIL_F_ON (0.3 N); de ahí a MANUS_TACTIL_F_MAX
+(20 N) la vibración crece en LÍNEA RECTA desde MANUS_TACTIL_VIBRACION_MIN (lo mínimo que se
+nota) hasta MANUS_VIBRACION_MAX; por encima de 20 N, al máximo. Filtrada (subida rápida,
+bajada suave) y con histéresis en el umbral.
+Cableado: ORCA_TACTIL_SENSOR_DE_DEDO dice qué sensor (nombre de orca_core) está en cada dedo
+FÍSICO de tu mano; orca_core los nombra en otro orden que tu cableado (15-oct).
+Por defecto solo vibra mientras el guante manda (aplicar = True); MANUS_HAPTICA_SIEMPRE =
+True vibra siempre (p. ej. al reproducir un episodio en la mano física).
+Nuevo cero de los sensores (la mano robótica sin tocar nada): guante.tactil.cero().
+Para probar sin el programa principal: python probar_haptica_tactil.py
 """
 import json
 import math
@@ -126,10 +148,55 @@ MANUS_CALIBRACION = _p("MANUS_CALIBRACION", os.path.join(
 MANUS_TIMEOUT_S   = float(_p("MANUS_TIMEOUT_S", 0.3))  # sin datos más tiempo → dedos quietos
 MANUS_TAU_S       = float(_p("MANUS_TAU_S", 0.025))    # suavizado (constante de tiempo)
 MANUS_HAPTICA     = bool(_p("MANUS_HAPTICA", True))
-MANUS_HAPTICA_HZ  = float(_p("MANUS_HAPTICA_HZ", 30.0))
-MANUS_FUERZA_MIN  = float(_p("MANUS_FUERZA_MIN", 0.05))  # N: por debajo no vibra
-MANUS_FUERZA_MAX  = float(_p("MANUS_FUERZA_MAX", 3.0))   # N: a partir de aquí vibra al 100 %
+MANUS_HAPTICA_HZ  = float(_p("MANUS_HAPTICA_HZ", 30.0))      # envíos de vibración por segundo
 MANUS_VIBRACION_MAX = float(_p("MANUS_VIBRACION_MAX", 1.0))
+# ── Háptica v6 (15-oct): presión de OBJETOS sobre cada dedo → vibración de ese dedo ──
+# (ver la clase SensorTactil). MANUS_FUERZA_MIN / MANUS_FUERZA_MAX de la v2 ya no se usan.
+MANUS_HAPTICA_F_ON   = float(_p("MANUS_HAPTICA_F_ON", 0.3))     # N: por debajo no vibra (roces)
+MANUS_HAPTICA_F_MAX  = _p("MANUS_HAPTICA_F_MAX", "auto")        # N a los que vibra al 100 %, o "auto":
+MANUS_HAPTICA_F_MAX_FRAC = float(_p("MANUS_HAPTICA_F_MAX_FRAC", 0.5))  # "auto" = esta fracción de la
+                                                                # fuerza MÁXIMA que puede hacer ese dedo
+MANUS_VIBRACION_MIN  = float(_p("MANUS_VIBRACION_MIN", 0.25))   # al empezar a tocar (por debajo no se nota)
+MANUS_HAPTICA_GAMMA  = float(_p("MANUS_HAPTICA_GAMMA", 0.6))    # <1: se distinguen mejor las presiones suaves
+MANUS_HAPTICA_ZONA   = str(_p("MANUS_HAPTICA_ZONA", "dedo"))    # "dedo" (todas las falanges) | "yema"
+MANUS_HAPTICA_PROPIA = _p("MANUS_HAPTICA_PROPIA", "pinza")     # contactos de la mano consigo misma:
+                                                                # "pinza" = solo pulgar ↔ otro dedo (pinzas sin
+                                                                # objeto) · False = ninguno · True = todos (palma...)
+MANUS_HAPTICA_TAU_SUBIDA = float(_p("MANUS_HAPTICA_TAU_SUBIDA", 0.02))   # s: al apretar, casi inmediato
+MANUS_HAPTICA_TAU_BAJADA = float(_p("MANUS_HAPTICA_TAU_BAJADA", 0.08))   # s: al soltar, sin parpadeos
+MANUS_HAPTICA_MUESTREO_HZ = float(_p("MANUS_HAPTICA_MUESTREO_HZ", 100.0))  # lecturas de contactos/s
+MANUS_HAPTICA_DEBUG  = bool(_p("MANUS_HAPTICA_DEBUG", False))   # imprime fuerza y vibración por dedo
+MANUS_HAPTICA_DEBUG_CADA_S = float(_p("MANUS_HAPTICA_DEBUG_CADA_S", 0.5))
+# ── Háptica v7: sensores FÍSICOS de la OrcaHand Touch (ver cabecera) ──
+MANUS_HAPTICA_FUENTE = str(_p("MANUS_HAPTICA_FUENTE", "real")).lower()  # "real" | "sim" | "auto"
+ORCA_TACTIL_ACTIVO   = bool(_p("ORCA_TACTIL_ACTIVO", True))      # lanzar el puente de los sensores
+MANUS_TACTIL_MEDIDA  = str(_p("MANUS_TACTIL_MEDIDA", "normal")).lower()  # "normal" (fz) | "total" (|f|)
+MANUS_TACTIL_F_ON    = float(_p("MANUS_TACTIL_F_ON", 0.3))       # N: aquí empieza a vibrar (el sensor da 0.1 N/paso)
+MANUS_TACTIL_F_MAX   = _p("MANUS_TACTIL_F_MAX", 20.0)            # N al 100 %: número o {"pulgar": 20.0, ...}
+MANUS_TACTIL_VIBRACION_MIN = float(_p("MANUS_TACTIL_VIBRACION_MIN", 0.15))  # vibración a F_ON: la mínima
+                                                                # que notas (búscala con probar_haptica_tactil.py --umbral)
+MANUS_TACTIL_GAMMA   = float(_p("MANUS_TACTIL_GAMMA", 1.0))      # 1.0 = lineal entre F_ON y F_MAX
+MANUS_HAPTICA_SIEMPRE = bool(_p("MANUS_HAPTICA_SIEMPRE", False))  # True: vibra aunque el guante no mande
+DEDOS_TACTIL = ("thumb", "index", "middle", "ring", "pinky")     # nombres de los sensores en orca_core
+DEDOS_FISICOS = ("pulgar", "indice", "corazon", "anular", "menique")  # orden de la vibración MANUS
+# Qué SENSOR (nombre de orca_core) lleva cada dedo FÍSICO de la OrcaHand. Medido el 15-oct:
+# apretando el anular vibraba el corazón, corazón→pulgar, índice→anular, pulgar→índice.
+_SENSOR_DE_DEDO_DEFECTO = {"pulgar": "index", "indice": "ring", "corazon": "thumb",
+                           "anular": "middle", "menique": "pinky"}
+
+
+def _mapa_sensores():
+    """ORCA_TACTIL_SENSOR_DE_DEDO → tupla de 5 nombres de sensor, en orden pulgar → meñique."""
+    m = dict(_p("ORCA_TACTIL_SENSOR_DE_DEDO", _SENSOR_DE_DEDO_DEFECTO))
+    sensores = tuple(str(m.get(d, s)) for d, s in zip(DEDOS_FISICOS, DEDOS_TACTIL))
+    if sorted(sensores) != sorted(DEDOS_TACTIL):
+        print(f"⚠️  [MANUS] ORCA_TACTIL_SENSOR_DE_DEDO no es una permutación de {DEDOS_TACTIL} "
+              f"({sensores}): uso el orden de orca_core tal cual.")
+        return DEDOS_TACTIL
+    return sensores
+
+
+SENSOR_DE_DEDO = _mapa_sensores()
 
 # Ganancia por actuador (1.0 = 1:1). Claves: nombres de ACTUADORES (ver NOMBRES).
 MANUS_GANANCIA    = dict(_p("MANUS_GANANCIA", {}))
@@ -540,7 +607,9 @@ def angulos_a_ctrl(ang_deg, mapeo):
 class GuanteManus:
     """Conexión con MANUS (hilo propio), últimos ángulos de la mano y vibración."""
 
-    def __init__(self, modo=MANUS_MODO, lado=MANUS_LADO):
+    def __init__(self, modo=MANUS_MODO, lado=MANUS_LADO, tactil=True, fuente=None):
+        """tactil=False: no lanza el puente de los sensores físicos (p. ej. calibrar_manus.py).
+        fuente: "real" | "sim" | "auto" (None = config.MANUS_HAPTICA_FUENTE)."""
         self.modo = modo
         self.lado = lado
         self.aplicar = False             # el bucle principal decide si el guante manda
@@ -558,8 +627,24 @@ class GuanteManus:
         self._guantes = {}               # glove_id → (side, isHaptics)
         self._id_guante = None           # glove_id de nuestra mano (para vibrar)
         self._ctrl_suave = None          # comando que se escribe en el hilo de física
-        self._t_haptica = 0.0
+        # háptica v6: el hilo de física MIDE (escribir_ctrl), un hilo propio ENVÍA (_bucle_haptica)
+        self._modelo = None              # lo da haptica() desde el bucle principal
+        self._tacto = None               # SensorTactil (se crea con el modelo)
+        self._t_muestra = 0.0
+        self.tacto_fuerza = np.zeros(5)  # N filtrados por dedo (pulgar → meñique) — HUD / debug
+        self.tacto_vibracion = np.zeros(5)
+        self._activos = np.zeros(5, dtype=bool)
         self._vibrando = False
+        self._hilo_haptica = None
+        # háptica v7: sensores FÍSICOS (TactilReal) y de qué fuente sale la vibración ahora
+        fuente = str(fuente or MANUS_HAPTICA_FUENTE).lower()
+        self.fuente = fuente if fuente in ("real", "sim", "auto") else "real"
+        self._usar_tactil = bool(tactil) and ORCA_TACTIL_ACTIVO and self.fuente in ("real", "auto")
+        self.tactil = None               # TactilReal (se crea en iniciar)
+        self.fuente_activa = "-"         # "real" | "sim" | "-" (HUD)
+        self.haptica_siempre = MANUS_HAPTICA_SIEMPRE
+        self._f_max_real = _f_max_tactil()
+        self._activos_real = np.zeros(5, dtype=bool)
         self._hilo = None
         self._activo = False
         self._sdk = None
@@ -594,6 +679,20 @@ class GuanteManus:
         self._activo = True
         self._hilo = threading.Thread(target=self._conectar, name="MANUS-conexion", daemon=True)
         self._hilo.start()
+        if MANUS_HAPTICA:
+            if self._usar_tactil:
+                self._iniciar_tactil()
+            self._hilo_haptica = threading.Thread(target=self._bucle_haptica, name="MANUS-haptica",
+                                                  daemon=True)
+            self._hilo_haptica.start()
+            print(f"🫳 [MANUS] Háptica: fuente '{self.fuente}'"
+                  + (f" · sensores físicos {MANUS_TACTIL_F_ON:.1f} N → "
+                     + "/".join(f"{f:.0f}" for f in self._f_max_real)
+                     + f" N  (vibración {100 * MANUS_TACTIL_VIBRACION_MIN:.0f} % → "
+                     f"{100 * MANUS_VIBRACION_MAX:.0f} %, gamma {MANUS_TACTIL_GAMMA:g})"
+                     + "  · sensores: " + " ".join(f"{d[:3]}←{s}" for d, s in
+                                                   zip(DEDOS_FISICOS, SENSOR_DE_DEDO))
+                     if self.fuente != "sim" else ""))
         print(f"🧤 [MANUS] SDK listo (modo {self.modo}); conectando en segundo plano...")
         return True
 
@@ -622,8 +721,30 @@ class GuanteManus:
                 avisado = True
             time.sleep(1.0)
 
+    def _iniciar_tactil(self):
+        try:
+            try:
+                from skill_shield.hardware.tactil_real import TactilReal
+            except ImportError:
+                sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                "..", "hardware"))
+                from tactil_real import TactilReal
+            self.tactil = TactilReal()
+            if not self.tactil.iniciar():
+                self.tactil.cerrar()
+                self.tactil = None
+        except Exception as e:
+            print(f"⚠️  [MANUS] Sin sensores táctiles físicos: {e}")
+            self.tactil = None
+
     def cerrar(self):
         self._activo = False
+        if self._hilo_haptica is not None:
+            self._hilo_haptica.join(timeout=0.5)      # apaga la vibración al salir
+            self._hilo_haptica = None
+        if self.tactil is not None:
+            self.tactil.cerrar()
+            self.tactil = None
         if self._sdk is None:
             return
         try:
@@ -694,20 +815,28 @@ class GuanteManus:
 
     def estado_txt(self):
         if self._sdk is None:
-            return "MANUS: sin SDK"
-        if not self.conectado:
-            return "MANUS: conectando..."
-        if not self.datos_frescos():
-            return "MANUS: SIN DATOS (¿guante encendido?)"
-        return f"MANUS: OK {self.hz:3.0f} Hz {MANUS_MAPEO}" + ("" if self.aplicar else " (standby)")
+            txt = "MANUS: sin SDK"
+        elif not self.conectado:
+            txt = "MANUS: conectando..."
+        elif not self.datos_frescos():
+            txt = "MANUS: SIN DATOS (¿guante encendido?)"
+        else:
+            txt = f"MANUS: OK {self.hz:3.0f} Hz {MANUS_MAPEO}" + ("" if self.aplicar else " (standby)")
+        if self.tactil is not None:
+            txt += " " + self.tactil.estado_corto()     # sensores físicos de la OrcaHand Touch
+        return txt
 
     # ── escritura en la simulación (hilo de física, antes de cada mj_step) ────
     def escribir_ctrl(self, datos, dt):
         """Lleva ctrl[1..16] de la mano hacia el guante con un filtro de primer orden
-        (MANUS_TAU_S). Sin datos frescos o con aplicar=False no toca nada."""
+        (MANUS_TAU_S). Sin datos frescos o con aplicar=False no toca nada.
+        Además (háptica v6) mide aquí la presión en cada dedo: este método corre en el hilo
+        de física, justo antes de cada mj_step, así que los contactos se leen a
+        MANUS_HAPTICA_MUESTREO_HZ y no al ritmo de la cámara."""
         if not self.aplicar:
             self._ctrl_suave = None
             return
+        self._muestrear_tacto(datos)
         obj = self.ctrl_objetivo()
         if obj is None:
             return                                     # dedos quietos donde estén
@@ -742,43 +871,274 @@ class GuanteManus:
             p[i] = float(min(max(potencias[i], 0.0), 1.0))
         return self.lib.CoreSdk_VibrateFingersForGlove(gid, p) == self.RC.Success
 
-    def haptica(self, modelo, datos):
-        """Fuerza de contacto en cada yema de la OrcaHand (simulación) → vibración del
-        dedo correspondiente. Llamar con el candado de la física (bucle principal)."""
-        if not (MANUS_HAPTICA and self.aplicar and self.conectado and self.es_haptico()):
-            if self._vibrando:
-                self.vibrar([0.0] * 5)
-                self._vibrando = False
+    def haptica(self, modelo, datos=None):
+        """Lo llama el bucle principal en cada fotograma (como antes). En v6 solo entrega el
+        modelo: la presión se MIDE en el hilo de física (escribir_ctrl) y la vibración se
+        ENVÍA desde un hilo propio (_bucle_haptica), así no depende de los FPS de la cámara."""
+        if self._modelo is None and modelo is not None:
+            self._modelo = modelo
+
+    def _muestrear_tacto(self, datos):
+        """Hilo de física: fuerzas de contacto por dedo → filtro (subida rápida, bajada suave).
+        Solo con la fuente "sim", o "auto" sin datos de los sensores físicos."""
+        if not MANUS_HAPTICA or self._modelo is None or self.fuente == "real":
+            return
+        if self.fuente == "auto" and self.fuente_activa == "real":
             return
         ahora = time.perf_counter()
-        if ahora - self._t_haptica < 1.0 / MANUS_HAPTICA_HZ:
+        dt = ahora - self._t_muestra
+        if dt < 1.0 / MANUS_HAPTICA_MUESTREO_HZ:
             return
-        self._t_haptica = ahora
-        fuerzas = fuerzas_yemas(modelo, datos)
-        rango = max(MANUS_FUERZA_MAX - MANUS_FUERZA_MIN, 1e-6)
-        pot = [MANUS_VIBRACION_MAX * min(max((f - MANUS_FUERZA_MIN) / rango, 0.0), 1.0)
-               for f in fuerzas]
-        if any(pot) or self._vibrando:
-            self.vibrar(pot)
-            self._vibrando = any(pot)
+        self._t_muestra = ahora
+        dt = min(dt, 0.1)
+        if self._tacto is None:
+            try:
+                self._tacto = SensorTactil(self._modelo)
+            except Exception as e:
+                print(f"⚠️  [MANUS] Háptica desactivada: no se pudo preparar el sensor táctil ({e})")
+                self._tacto = False
+        if not self._tacto:
+            return
+        f = self._tacto.fuerzas(self._modelo, datos)
+        filt = self.tacto_fuerza.copy()
+        tau = np.where(f > filt, MANUS_HAPTICA_TAU_SUBIDA, MANUS_HAPTICA_TAU_BAJADA)
+        filt += (1.0 - np.exp(-dt / np.maximum(tau, 1e-4))) * (f - filt)
+        pot, self._activos = self._tacto.potencias(filt, self._activos)
+        with self._lock:
+            self.tacto_fuerza, self.tacto_vibracion = filt, pot
+
+    def _fuerzas_reales(self):
+        """Fuerza (N) por dedo de los sensores FÍSICOS, pulgar → meñique, o None sin datos frescos."""
+        if self.tactil is None:
+            return None
+        d = self.tactil.fuerzas()
+        if d is None:
+            return None
+        f = np.zeros(5)
+        for i, sensor in enumerate(SENSOR_DE_DEDO):     # i = dedo FÍSICO (pulgar → meñique)
+            v = d.get(sensor)
+            if not v:
+                continue
+            if MANUS_TACTIL_MEDIDA == "total":
+                f[i] = math.sqrt(sum(float(x) * float(x) for x in v[:3]))
+            else:
+                f[i] = max(float(v[2]), 0.0)          # fz: componente normal (≥ 0)
+        return f
+
+    def _tacto_real(self, f, filt, dt):
+        """Filtro (subida rápida, bajada suave) + curva umbral → 100 % con histéresis."""
+        tau = np.where(f > filt, MANUS_HAPTICA_TAU_SUBIDA, MANUS_HAPTICA_TAU_BAJADA)
+        filt = filt + (1.0 - np.exp(-dt / np.maximum(tau, 1e-4))) * (f - filt)
+        pot, self._activos_real = potencias_tactil(filt, self._f_max_real, self._activos_real)
+        return filt, pot
+
+    def _bucle_haptica(self):
+        """Hilo propio. Cada ciclo (MANUS_HAPTICA_MUESTREO_HZ) toma la fuerza de cada dedo
+        —sensores físicos o simulación, según MANUS_HAPTICA_FUENTE— y manda la vibración
+        al guante como mucho a MANUS_HAPTICA_HZ (la apaga en cuanto todo vuelve a 0)."""
+        periodo = 1.0 / max(MANUS_HAPTICA_MUESTREO_HZ, MANUS_HAPTICA_HZ, 1.0)
+        periodo_envio = 1.0 / max(MANUS_HAPTICA_HZ, 1.0)
+        enviado = np.zeros(5)
+        filt_real = np.zeros(5)
+        t_envio = t_debug = 0.0
+        t_prev = time.perf_counter()
+        while self._activo:
+            t0 = time.perf_counter()
+            dt, t_prev = min(t0 - t_prev, 0.1), t0
+            try:
+                manda = self.haptica_siempre or self.aplicar
+                f_real = self._fuerzas_reales() if self.fuente != "sim" else None
+                if f_real is not None:
+                    filt_real, pot_real = self._tacto_real(f_real, filt_real, dt)
+                    fuente = "real"
+                else:
+                    filt_real[:] = 0.0
+                    self._activos_real[:] = False
+                    fuente = "sim" if self.fuente in ("sim", "auto") and bool(self._tacto) else "-"
+                self.fuente_activa = fuente
+                if fuente == "real":
+                    with self._lock:
+                        self.tacto_fuerza, self.tacto_vibracion = filt_real.copy(), pot_real.copy()
+                    pot = pot_real if manda else np.zeros(5)
+                    fz = filt_real
+                else:
+                    with self._lock:
+                        pot = self.tacto_vibracion.copy() if (fuente == "sim" and self.aplicar) \
+                            else np.zeros(5)
+                        fz = self.tacto_fuerza.copy()
+                activo = self.conectado and self.es_haptico()
+                if not activo:
+                    pot = np.zeros(5)
+                apagar = enviado.any() and not pot.any()
+                cambia = np.abs(pot - enviado).max() > 0.02
+                if apagar or (cambia and t0 - t_envio >= periodo_envio):
+                    if self.vibrar(pot):
+                        enviado, t_envio = pot.copy(), t0
+                if MANUS_HAPTICA_DEBUG and t0 - t_debug >= MANUS_HAPTICA_DEBUG_CADA_S \
+                        and (activo or fuente == "real"):
+                    t_debug = t0
+                    print(f"[HAPTICA {fuente}] " + "  ".join(
+                        f"{n[:3]} {f:5.2f}N→{100 * p:3.0f}%"
+                        for n, f, p in zip(SensorTactil.DEDOS, fz, pot)))
+            except Exception as e:
+                self.error = f"haptica: {e}"
+            time.sleep(max(0.0, periodo - (time.perf_counter() - t0)))
+        if enviado.any():
+            try:
+                self.vibrar(np.zeros(5))
+            except Exception:
+                pass
 
 
-_ids_yema = None
+def _f_max_tactil():
+    """MANUS_TACTIL_F_MAX → array (pulgar → meñique). Acepta un número o un dict por dedo
+    (claves en inglés como orca_core —thumb, index…— o en español —pulgar, indice…)."""
+    v = MANUS_TACTIL_F_MAX
+    out = np.full(5, 20.0)
+    if isinstance(v, dict):                     # por dedo FÍSICO (pulgar, indice... o thumb, index...)
+        for i, (en, es) in enumerate(zip(DEDOS_TACTIL, DEDOS_FISICOS)):
+            out[i] = float(v.get(es, v.get(en, out[i])))
+    else:
+        out[:] = float(v)
+    return np.maximum(out, MANUS_TACTIL_F_ON + 0.1)
 
 
-def fuerzas_yemas(modelo, datos):
-    """Fuerza normal (N) de contacto sobre cada yema (pulgar → meñique)."""
-    import mujoco
-    global _ids_yema
-    if _ids_yema is None:
-        _ids_yema = [mujoco.mj_name2id(modelo, mujoco.mjtObj.mjOBJ_BODY, n) for n in _BODIES_YEMA]
-    f = [0.0] * 5
-    f6 = np.zeros(6)
-    for i in range(datos.ncon):
-        c = datos.contact[i]
-        b1, b2 = modelo.geom_bodyid[c.geom1], modelo.geom_bodyid[c.geom2]
-        for k, b in enumerate(_ids_yema):
-            if b >= 0 and (b1 == b or b2 == b) and b1 != b2:
-                mujoco.mj_contactForce(modelo, datos, i, f6)
-                f[k] += abs(float(f6[0]))
-    return f
+def potencias_tactil(f, f_max, activos, f_on=None):
+    """Fuerza (N) → vibración 0..1 por dedo: 0 bajo el umbral (con histéresis: se apaga al
+    bajar del 70 % del umbral), y de MANUS_TACTIL_VIBRACION_MIN a MANUS_VIBRACION_MAX entre el
+    umbral y f_max (recta con MANUS_TACTIL_GAMMA = 1); por encima de f_max, al máximo."""
+    on = MANUS_TACTIL_F_ON if f_on is None else f_on
+    activos = np.where(activos, f > 0.7 * on, f >= on)
+    x = np.clip((f - on) / (f_max - on), 0.0, 1.0) ** max(MANUS_TACTIL_GAMMA, 0.05)
+    pot = MANUS_TACTIL_VIBRACION_MIN + (MANUS_VIBRACION_MAX - MANUS_TACTIL_VIBRACION_MIN) * x
+    return np.where(activos, pot, 0.0), activos
+
+
+class SensorTactil:
+    """Presión que los OBJETOS hacen sobre cada dedo de la OrcaHand simulada.
+
+    Por qué antes vibraba "al llegar a un límite": se sumaban TODOS los contactos de la yema
+    con cualquier cosa, también con la PALMA y los dedos vecinos de la propia mano. Al cerrar
+    el puño (y más con MANUS_MAPEO = "cierre", que lleva las yemas a la palma) la mano se
+    aprieta contra sí misma y el guante vibraba al máximo sin tocar nada. Ahora:
+      · solo cuentan los contactos de un dedo con algo que NO es el robot (objetos, mesa,
+        taladro...) y, con MANUS_HAPTICA_PROPIA = "pinza" (por defecto), el PULGAR contra
+        otro dedo (una pinza sin objeto se siente en los dos dedos). Nunca la palma ni los
+        roces laterales entre dedos. False = solo objetos; True = todo, como antes;
+      · cuenta TODO el dedo (falange proximal, media/distal y su base; en el pulgar desde el
+        CMC): agarrar un mango con la parte baja de los dedos también se siente.
+        MANUS_HAPTICA_ZONA = "yema" vuelve a solo la punta;
+      · la escala es la de CADA dedo: 100 % de vibración = MANUS_HAPTICA_F_MAX_FRAC (50 %) de
+        la fuerza máxima que ese dedo puede hacer en la punta (par máximo de su actuador MCP
+        / distancia del MCP a la punta). El servo de la mano es un muelle (kp): cuanto más
+        cierras tu dedo por encima de lo que deja el objeto, más aprieta → más vibra.
+      · curva: nada por debajo de MANUS_HAPTICA_F_ON; desde ahí, de MANUS_VIBRACION_MIN a
+        MANUS_VIBRACION_MAX con exponente MANUS_HAPTICA_GAMMA (las presiones suaves se
+        distinguen mejor), con histéresis para que no parpadee en el umbral.
+    """
+    DEDOS = ("pulgar", "indice", "corazon", "anular", "menique")
+    # articulación en la base de cada dedo (todo lo que cuelga de ella es "el dedo")
+    _RAIZ = ("right_t-cmc", "right_i-abd", "right_m-abd", "right_r-abd", "right_p-abd")
+    _MCP = ("right_t-mcp", "right_i-mcp", "right_m-mcp", "right_r-mcp", "right_p-mcp")
+    _YEMA = _BODIES_YEMA
+
+    def __init__(self, modelo):
+        import mujoco
+        self._mj = mujoco
+        B, J = mujoco.mjtObj.mjOBJ_BODY, mujoco.mjtObj.mjOBJ_JOINT
+        nb = int(modelo.nbody)
+
+        def bajo(raiz):
+            """Cuerpos que cuelgan de 'raiz' (incluida)."""
+            out = np.zeros(nb, dtype=bool)
+            for b in range(nb):
+                p = b
+                while p > 0 and p != raiz:
+                    p = int(modelo.body_parentid[p])
+                out[b] = (p == raiz) and raiz > 0
+            return out
+
+        self.dedo_de_body = np.full(nb, -1, dtype=int)
+        for i, (raiz, yema) in enumerate(zip(self._RAIZ, self._YEMA)):
+            if MANUS_HAPTICA_ZONA == "yema":
+                b0 = mujoco.mj_name2id(modelo, B, yema)
+            else:
+                j = mujoco.mj_name2id(modelo, J, raiz)
+                b0 = int(modelo.jnt_bodyid[j]) if j >= 0 else mujoco.mj_name2id(modelo, B, yema)
+            if b0 < 0:
+                raise ValueError(f"no encuentro el dedo '{self.DEDOS[i]}' ({raiz} / {yema})")
+            self.dedo_de_body[bajo(b0)] = i
+        # todo el robot (brazo + mano): sus contactos consigo mismo no cuentan
+        base = mujoco.mj_name2id(modelo, B, "base_link")
+        if base < 0:
+            base = mujoco.mj_name2id(modelo, B, "mano_mount")
+        self.es_robot = bajo(base) if base > 0 else (self.dedo_de_body >= 0)
+
+        # Fuerza máxima en la punta de cada dedo: par máx. del actuador MCP / palanca MCP → punta
+        d = mujoco.MjData(modelo)
+        mujoco.mj_kinematics(modelo, d)
+        self.f_max = np.zeros(5)
+        self.f_punta_max = np.zeros(5)
+        for i, (mcp, yema) in enumerate(zip(self._MCP, self._YEMA)):
+            j = mujoco.mj_name2id(modelo, J, mcp)
+            by = mujoco.mj_name2id(modelo, B, yema)
+            par = 1.0
+            for a in range(int(modelo.nu)):
+                if int(modelo.actuator_trntype[a]) == 0 and int(modelo.actuator_trnid[a, 0]) == j:
+                    if int(modelo.actuator_forcelimited[a]):
+                        par = float(max(abs(modelo.actuator_forcerange[a, 0]),
+                                        abs(modelo.actuator_forcerange[a, 1])))
+                    par *= abs(float(modelo.actuator_gear[a, 0])) or 1.0
+                    break
+            palanca = 0.06
+            if j >= 0 and by >= 0:
+                # la punta: el punto del cuerpo de la yema más lejano a su articulación (aprox.:
+                # su centro de masas, prolongado lo mismo otra vez desde el PIP)
+                pip = d.xpos[by]
+                punta = pip + 2.0 * (d.xipos[by] - pip)
+                palanca = max(float(np.linalg.norm(punta - d.xanchor[j])), 0.02)
+            self.f_punta_max[i] = par / palanca
+            if str(MANUS_HAPTICA_F_MAX).lower() == "auto":
+                self.f_max[i] = MANUS_HAPTICA_F_MAX_FRAC * self.f_punta_max[i]
+            else:
+                self.f_max[i] = float(MANUS_HAPTICA_F_MAX)
+        self.f_max = np.maximum(self.f_max, MANUS_HAPTICA_F_ON + 0.1)
+        self._f6 = np.zeros(6)
+        p = MANUS_HAPTICA_PROPIA
+        self._propia = "pinza" if str(p).lower() == "pinza" else bool(p)
+        print("🫳 [MANUS] Háptica por presión (objetos"
+              + {"pinza": " + pinzas pulgar↔dedo", True: " + toda la mano", False: ""}[self._propia]
+              + f", zona '{MANUS_HAPTICA_ZONA}'): "
+              + "  ".join(f"{n} {MANUS_HAPTICA_F_ON:.1f}→{f:.1f} N" for n, f in zip(self.DEDOS, self.f_max))
+              + "  (umbral → 100 %)")
+
+    def fuerzas(self, modelo, datos):
+        """Fuerza normal total (N) que recibe cada dedo, pulgar → meñique."""
+        f = np.zeros(5)
+        gb = modelo.geom_bodyid
+        for i in range(int(datos.ncon)):
+            c = datos.contact[i]
+            b1, b2 = int(gb[c.geom1]), int(gb[c.geom2])
+            d1, d2 = self.dedo_de_body[b1], self.dedo_de_body[b2]
+            if d1 < 0 and d2 < 0:
+                continue                                   # ningún dedo implicado
+            if self.es_robot[b1] and self.es_robot[b2] and self._propia is not True:
+                # la mano contra sí misma: solo la pinza pulgar ↔ otro dedo (si "pinza")
+                if not (self._propia == "pinza" and d1 >= 0 and d2 >= 0 and d1 != d2
+                        and 0 in (d1, d2)):
+                    continue
+            self._mj.mj_contactForce(modelo, datos, i, self._f6)
+            fn = abs(float(self._f6[0]))
+            if d1 >= 0:
+                f[d1] += fn
+            if d2 >= 0 and d2 != d1:
+                f[d2] += fn
+        return f
+
+    def potencias(self, f, activos):
+        """Fuerza filtrada (N) → vibración 0..1 por dedo, con histéresis en el umbral."""
+        on = MANUS_HAPTICA_F_ON
+        activos = np.where(activos, f > 0.7 * on, f > on)
+        x = np.clip((f - on) / (self.f_max - on), 0.0, 1.0) ** max(MANUS_HAPTICA_GAMMA, 0.05)
+        pot = MANUS_VIBRACION_MIN + (MANUS_VIBRACION_MAX - MANUS_VIBRACION_MIN) * x
+        return np.where(activos, pot, 0.0), activos

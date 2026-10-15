@@ -919,3 +919,47 @@ POSE_BRAZO_ACTIVAR = [1.571, -0.37, -0.60, 0.0, 0.0, 0.0]
 # Velocidad / aceleración del comando continuo de joint4 y joint5 (como SUAVE_VEL_MAX)
 SUAVE_VEL_MUNECA_ARCTOS  = 1.5    # rad/s
 SUAVE_ACEL_MUNECA_ARCTOS = 15.0   # rad/s²
+# ══════════════════════════════════════════════════════════════════════════════
+# HÁPTICA REAL (15-oct): yemas de la OrcaHand Touch FÍSICA → vibración del MANUS
+# Pega este bloque al FINAL de config.py (los valores del final mandan).
+# ══════════════════════════════════════════════════════════════════════════════
+# De dónde sale la vibración de cada dedo del guante:
+#   "real" → sensores táctiles de la mano física (lo que pediste; la simulación NO vibra)
+#   "sim"  → contactos de la mano simulada (lo de antes)
+#   "auto" → real si llegan datos de los sensores; si no, la simulación
+MANUS_HAPTICA_FUENTE = "real"
+
+# Puente de los sensores (puente_tactil.py, proceso aparte con el orca_core NUEVO).
+ORCA_TACTIL_ACTIVO    = True                                     # GuanteManus lo lanza y lo cierra solo
+ORCA_TACTIL_CORE_RUTA = os.path.join(_BASE_DIR, "orca_core_touch")   # git clone ... orca_core_touch
+ORCA_TACTIL_PUERTO    = "auto"            # o el puerto de los sensores, p. ej. "/dev/ttyACM0"
+                                          # (NUNCA el de los motores: PUERTO_HARDWARE se excluye siempre)
+ORCA_TACTIL_UDP       = "127.0.0.1:47311" # puerto local por el que llegan las fuerzas
+ORCA_TACTIL_MAX_EDAD_S = 0.15             # datos más viejos que esto = sin datos → no vibra
+
+# Qué SENSOR (nombre de orca_core) va en cada dedo FÍSICO de tu OrcaHand. orca_core los nombra
+# en otro orden que tu cableado: medido el 15-oct (apretando anular vibraba corazón, etc.).
+# El meñique se deduce (es el que queda): compruébalo apretándolo.
+ORCA_TACTIL_SENSOR_DE_DEDO = {
+    "pulgar":  "index",
+    "indice":  "ring",
+    "corazon": "thumb",
+    "anular":  "middle",
+    "menique": "pinky",
+}
+
+# Fuerza → vibración (por dedo). El sensor mide en pasos de 0.1 N (0 … 25.5 N).
+#   < 0.3 N → nada · 0.3 N → lo MÍNIMO que se nota · crece en LÍNEA RECTA · ≥ 20 N → al máximo
+MANUS_TACTIL_MEDIDA = "normal"            # "normal" = solo la presión (fz) · "total" = |f| (incluye roce)
+MANUS_TACTIL_F_ON   = 0.3                 # N: aquí empieza a vibrar
+MANUS_TACTIL_F_MAX  = 20.0                # N: aquí llega al máximo (y se queda); o por dedo físico:
+# MANUS_TACTIL_F_MAX = {"pulgar": 20.0, "indice": 20.0, "corazon": 20.0, "anular": 20.0, "menique": 20.0}
+MANUS_TACTIL_VIBRACION_MIN = 0.02         # vibración a 0.3 N: la MÍNIMA que notas. Búscala con
+                                          #   python probar_haptica_tactil.py --umbral
+MANUS_TACTIL_GAMMA  = 1.0                 # 1.0 = lineal
+MANUS_VIBRACION_MAX = 1.0
+MANUS_HAPTICA_TAU_SUBIDA = 0.02           # s: al apretar responde casi al instante
+MANUS_HAPTICA_TAU_BAJADA = 0.08           # s: al soltar se apaga sin parpadeos
+MANUS_HAPTICA_HZ    = 30.0                # máx. envíos de vibración al guante por segundo
+MANUS_HAPTICA_SIEMPRE = False             # True: vibra aunque el guante no mande ([S]/standby, modo IA...)
+MANUS_HAPTICA_DEBUG = False               # True: imprime fuerza y vibración por dedo cada 0.5 s
